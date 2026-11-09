@@ -1,0 +1,232 @@
+[
+  {
+    "id": "b01-all-departments",
+    "title": "Every department",
+    "topic": "SELECT",
+    "difficulty": "Easy",
+    "prompt": "Show every column for every row in the departments table.",
+    "hint": "SELECT * returns all columns.",
+    "solution": "SELECT * FROM departments;",
+    "order_matters": false
+  },
+  {
+    "id": "b02-employee-names",
+    "title": "Employee names",
+    "topic": "SELECT",
+    "difficulty": "Easy",
+    "prompt": "List the first_name and last_name of every employee.",
+    "hint": "Name the columns you want, separated by commas.",
+    "solution": "SELECT first_name, last_name FROM employees;",
+    "order_matters": false
+  },
+  {
+    "id": "b03-high-earners",
+    "title": "High earners",
+    "topic": "WHERE",
+    "difficulty": "Easy",
+    "prompt": "Find employees who earn more than 100000. Show first_name, last_name and salary.",
+    "hint": "Filter rows with WHERE salary > ...",
+    "solution": "SELECT first_name, last_name, salary FROM employees WHERE salary > 100000;",
+    "order_matters": false
+  },
+  {
+    "id": "b04-salary-sorted",
+    "title": "Highest salary first",
+    "topic": "ORDER BY",
+    "difficulty": "Easy",
+    "prompt": "List every employee's first_name and salary, sorted from the highest salary to the lowest.",
+    "hint": "ORDER BY sorts ascending by default. Add DESC.",
+    "solution": "SELECT first_name, salary FROM employees ORDER BY salary DESC;",
+    "order_matters": true
+  },
+  {
+    "id": "b05-top-three",
+    "title": "Top 3 salaries",
+    "topic": "LIMIT",
+    "difficulty": "Easy",
+    "prompt": "Show the first_name and salary of the 3 highest-paid employees, highest first.",
+    "hint": "Sort first, then use LIMIT.",
+    "solution": "SELECT first_name, salary FROM employees ORDER BY salary DESC LIMIT 3;",
+    "order_matters": true
+  },
+  {
+    "id": "b06-distinct-locations",
+    "title": "Office locations",
+    "topic": "DISTINCT",
+    "difficulty": "Easy",
+    "prompt": "List each department location once (no duplicates).",
+    "hint": "SELECT DISTINCT removes duplicate rows.",
+    "solution": "SELECT DISTINCT location FROM departments;",
+    "order_matters": false
+  },
+  {
+    "id": "b07-new-york-departments",
+    "title": "New York departments",
+    "topic": "WHERE",
+    "difficulty": "Easy",
+    "prompt": "Show the name of every department located in 'New York'.",
+    "hint": "Text values go in single quotes: WHERE location = 'New York'.",
+    "solution": "SELECT name FROM departments WHERE location = 'New York';",
+    "order_matters": false
+  },
+  {
+    "id": "b08-hired-2020-2021",
+    "title": "Hired in 2020 or 2021",
+    "topic": "BETWEEN",
+    "difficulty": "Easy",
+    "prompt": "Show the first_name and hire_date of employees hired between 2020-01-01 and 2021-12-31 (inclusive). Dates are stored as 'YYYY-MM-DD' text.",
+    "hint": "BETWEEN includes both ends. ISO date text sorts correctly as text.",
+    "solution": "SELECT first_name, hire_date FROM employees WHERE hire_date BETWEEN '2020-01-01' AND '2021-12-31';",
+    "order_matters": false
+  },
+  {
+    "id": "b09-desk-products",
+    "title": "Desk products",
+    "topic": "LIKE",
+    "difficulty": "Easy",
+    "prompt": "Show the name and price of every product whose name contains the word 'Desk'.",
+    "hint": "% matches any number of characters: LIKE '%Desk%'.",
+    "solution": "SELECT name, price FROM products WHERE name LIKE '%Desk%';",
+    "order_matters": false
+  },
+  {
+    "id": "b10-missing-email",
+    "title": "Missing emails",
+    "topic": "NULL",
+    "difficulty": "Easy",
+    "prompt": "Find employees with no email on file. Show first_name and last_name.",
+    "hint": "= NULL never matches anything. Use IS NULL.",
+    "solution": "SELECT first_name, last_name FROM employees WHERE email IS NULL;",
+    "order_matters": false
+  },
+  {
+    "id": "b11-orders-in-progress",
+    "title": "Orders in progress",
+    "topic": "IN",
+    "difficulty": "Easy",
+    "prompt": "Show the order_id and status of every order whose status is 'shipped' or 'pending'.",
+    "hint": "WHERE status IN ('a', 'b') is shorter than two ORs.",
+    "solution": "SELECT order_id, status FROM orders WHERE status IN ('shipped', 'pending');",
+    "order_matters": false
+  },
+  {
+    "id": "b12-count-employees",
+    "title": "Headcount",
+    "topic": "Aggregates",
+    "difficulty": "Easy",
+    "prompt": "How many employees are there? Return a single number.",
+    "hint": "COUNT(*) counts rows.",
+    "solution": "SELECT COUNT(*) AS employee_count FROM employees;",
+    "order_matters": false
+  },
+  {
+    "id": "b13-products-per-category",
+    "title": "Products per category",
+    "topic": "GROUP BY",
+    "difficulty": "Easy",
+    "prompt": "For each product category, show the category and how many products are in it.",
+    "hint": "GROUP BY category, then COUNT(*).",
+    "solution": "SELECT category, COUNT(*) AS product_count FROM products GROUP BY category;",
+    "order_matters": false
+  },
+  {
+    "id": "b14-avg-salary-by-dept",
+    "title": "Average salary by department",
+    "topic": "GROUP BY",
+    "difficulty": "Medium",
+    "prompt": "For each dept_id in the employees table, show the dept_id and the average salary rounded to 2 decimal places. Employees without a department form their own group.",
+    "hint": "ROUND(AVG(salary), 2). GROUP BY puts all NULLs into one group.",
+    "solution": "SELECT dept_id, ROUND(AVG(salary), 2) AS avg_salary FROM employees GROUP BY dept_id;",
+    "order_matters": false
+  },
+  {
+    "id": "b15-big-departments",
+    "title": "Departments with more than 2 people",
+    "topic": "HAVING",
+    "difficulty": "Medium",
+    "prompt": "Show the dept_id and employee count for every department that has more than 2 employees.",
+    "hint": "WHERE filters rows before grouping. HAVING filters groups after.",
+    "solution": "SELECT dept_id, COUNT(*) AS employee_count FROM employees WHERE dept_id IS NOT NULL GROUP BY dept_id HAVING COUNT(*) > 2;",
+    "order_matters": false
+  },
+  {
+    "id": "b16-employee-departments",
+    "title": "Employees and their departments",
+    "topic": "JOIN",
+    "difficulty": "Medium",
+    "prompt": "Show each employee's first_name next to the name of their department. Leave out employees with no department.",
+    "hint": "INNER JOIN departments ON employees.dept_id = departments.dept_id. An INNER JOIN drops rows with no match.",
+    "solution": "SELECT e.first_name, d.name AS department FROM employees e JOIN departments d ON e.dept_id = d.dept_id;",
+    "order_matters": false
+  },
+  {
+    "id": "b17-department-headcount",
+    "title": "Headcount for every department",
+    "topic": "LEFT JOIN",
+    "difficulty": "Medium",
+    "prompt": "Show every department name and how many employees it has, including departments with 0 employees.",
+    "hint": "Start FROM departments and LEFT JOIN employees. COUNT(e.emp_id) ignores NULLs, so empty departments get 0.",
+    "solution": "SELECT d.name, COUNT(e.emp_id) AS employee_count FROM departments d LEFT JOIN employees e ON e.dept_id = d.dept_id GROUP BY d.dept_id, d.name;",
+    "order_matters": false
+  },
+  {
+    "id": "b18-customers-without-orders",
+    "title": "Customers with no orders",
+    "topic": "LEFT JOIN",
+    "difficulty": "Medium",
+    "prompt": "Show the name of every customer who has never placed an order.",
+    "hint": "LEFT JOIN orders and keep the rows where the order side IS NULL. NOT IN or NOT EXISTS also work.",
+    "solution": "SELECT c.name FROM customers c LEFT JOIN orders o ON o.customer_id = c.customer_id WHERE o.order_id IS NULL;",
+    "order_matters": false
+  },
+  {
+    "id": "b19-customer-spend",
+    "title": "Total spend per customer",
+    "topic": "JOIN + GROUP BY",
+    "difficulty": "Medium",
+    "prompt": "For each customer who has placed at least one order, show their name and the total amount spent across all their orders (quantity x price), whatever the order status.",
+    "hint": "Join customers, orders and products, then SUM(o.quantity * p.price) grouped by customer.",
+    "solution": "SELECT c.name, SUM(o.quantity * p.price) AS total_spent FROM customers c JOIN orders o ON o.customer_id = c.customer_id JOIN products p ON p.product_id = o.product_id GROUP BY c.customer_id, c.name;",
+    "order_matters": false
+  },
+  {
+    "id": "b20-above-average-salary",
+    "title": "Above-average salaries",
+    "topic": "Subquery",
+    "difficulty": "Medium",
+    "prompt": "Show the first_name and salary of employees who earn more than the average salary of all employees.",
+    "hint": "Aggregates can't go straight into WHERE. Compare against (SELECT AVG(salary) FROM employees).",
+    "solution": "SELECT first_name, salary FROM employees WHERE salary > (SELECT AVG(salary) FROM employees);",
+    "order_matters": false
+  },
+  {
+    "id": "b21-salary-bands",
+    "title": "Salary bands",
+    "topic": "CASE",
+    "difficulty": "Medium",
+    "prompt": "Show every employee's first_name and a salary band: 'High' for 100000 or more, 'Medium' for 70000 to 99999, and 'Low' for anything below 70000.",
+    "hint": "CASE WHEN ... THEN ... WHEN ... THEN ... ELSE ... END. Conditions are checked top to bottom.",
+    "solution": "SELECT first_name, CASE WHEN salary >= 100000 THEN 'High' WHEN salary >= 70000 THEN 'Medium' ELSE 'Low' END AS band FROM employees;",
+    "order_matters": false
+  },
+  {
+    "id": "b22-orders-per-status",
+    "title": "Most common order status",
+    "topic": "GROUP BY + ORDER BY",
+    "difficulty": "Medium",
+    "prompt": "Count the orders for each status. Show status and count, most common status first.",
+    "hint": "GROUP BY status, then ORDER BY the count DESC.",
+    "solution": "SELECT status, COUNT(*) AS order_count FROM orders GROUP BY status ORDER BY order_count DESC;",
+    "order_matters": true
+  },
+  {
+    "id": "b23-employee-managers",
+    "title": "Who reports to whom",
+    "topic": "Self JOIN",
+    "difficulty": "Hard",
+    "prompt": "For every employee who has a manager, show the employee's first_name and their manager's first_name (both come from the employees table).",
+    "hint": "Join employees to itself with two aliases: employees e JOIN employees m ON e.manager_id = m.emp_id.",
+    "solution": "SELECT e.first_name AS employee, m.first_name AS manager FROM employees e JOIN employees m ON e.manager_id = m.emp_id;",
+    "order_matters": false
+  }
+]

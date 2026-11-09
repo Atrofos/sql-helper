@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+user_data/
+.DS_Store
+SQL Helper.app/
+.launcher/
