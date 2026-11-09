@@ -29,6 +29,19 @@ Write a query on the left, and the results table on the right updates as you typ
 It uses only the Python standard library (`tkinter`, `sqlite3`, `json`), so
 there's nothing to `pip install`.
 
+## Quick start
+
+Download the project, go into its folder, and start the app:
+
+```bash
+git clone https://github.com/Atrofos/sql-helper.git
+cd sql-helper
+./run.sh
+```
+
+If it says Python or Tk is missing, see [Requirements](#requirements). For a
+double-click app on a Mac, see [Running](#running).
+
 ## Requirements
 
 - macOS (it should also run on Windows/Linux, but it's only been tested on macOS)
