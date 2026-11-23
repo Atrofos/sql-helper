@@ -5,6 +5,7 @@ Storage layout (inside the data directory, ``user_data/`` by default):
     questions/<question-id>.json   one file per user-created question
     history.jsonl                  one JSON object per checked attempt
     history_backups/               copies made automatically before each reset
+    reports/                       progress reports (HTML) made with Report...
 """
 
 from __future__ import annotations
@@ -151,6 +152,14 @@ class QuestionStore:
         if not question.is_custom:
             raise ValueError("Built-in questions can't be deleted.")
         self._path_for(question).unlink(missing_ok=True)
+
+    # ---- reports -------------------------------------------------------
+    def save_report(self, mode: str, html_text: str) -> Path:
+        """Write a progress report to user_data/reports/ and return its path."""
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = self.data_dir / "reports" / f"report-{mode}-{stamp}.html"
+        _atomic_write(path, html_text)
+        return path
 
     # ---- history -------------------------------------------------------
     def record_attempt(self, question_id: str, sql: str, correct: bool) -> None:

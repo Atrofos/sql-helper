@@ -26,7 +26,7 @@ Shared features:
 - **Run** a correct answer and the question is marked done. Use **Check
   Answer** to grade any attempt and get an explanation of what's wrong: column
   count, missing or extra rows, or wrong order.
-- After you complete a question, **Next >** turns blue with a ✓ so you know
+- After you complete a question, **Next ›** turns blue with a ✓ so you know
   where to go.
 - **Expected Result** stays hidden until you press **Show Expected Result**, so
   you can try first. It's revealed automatically once you get the answer right.
@@ -38,7 +38,16 @@ Shared features:
 - **Your own questions:** create, edit and delete them. They're saved as JSON
   files in `user_data/questions/`.
 - **Attempt history:** every checked attempt goes to `user_data/history.jsonl`.
-  Solved questions show `[done]` in the picker.
+  Solved questions get a ✓ in the sidebar.
+- **Question sidebar:** every question is listed down the left, grouped into
+  Easy / Medium / Hard with a solved count per group. Search by title or
+  topic. **‹ Prev / Next ›** are at the bottom of the sidebar. The sidebar icon
+  at the top left hides or shows it; while it's hidden, **‹ Prev / Next ›** move
+  to the bottom right of the window, and the dividers stop before any pane gets
+  too narrow to use.
+- **Progress report:** **Report…** explains where you went wrong on the
+  questions you made or generated (or all questions), and saves it as a web
+  page (see [Progress report](#progress-report)).
 - **Free practice:** run any query or Python code with no question selected.
 
 It uses only the Python standard library (`tkinter`, `sqlite3`, `json`,
@@ -118,17 +127,20 @@ python3 -m sql_helper
 
 ## Using it
 
-1. Pick a question from the drop-down at the top, or step through with **< Prev / Next >**.
+1. Click a question in the sidebar on the left, or step through with **‹ Prev / Next ›**
+   (they follow the sidebar's order: Easy, then Medium, then Hard).
 2. Type SQL in the editor. With **Live preview** on, **Your Result** updates as you type.
 3. Press **Run** (`Cmd+Enter`). If your result is right, the question is marked
-   `[done]` and **Next >** lights up. Press **Check Answer** (`Cmd+Shift+Enter`)
+   done (✓ in the sidebar) and **Next ›** lights up. Press **Check Answer** (`Cmd+Shift+Enter`)
    when you want feedback on a wrong answer.
-4. Stuck? Use **Show Hint**, then **Show Expected Result**, then **Reveal Solution**.
+4. Stuck? On the question card use **Hint**, then **Show Expected**, then **Solution**.
+   **Lesson** opens the illustrated lesson for the topic.
 
 | Shortcut | Action |
 |---|---|
 | `Cmd+Enter` (⌘↵) | Run query |
 | `Cmd+Shift+Enter` (⌘⇧↵) | Check answer |
+| `Cmd+[` / `Cmd+]` | Previous / next question (works with the sidebar hidden) |
 | `Cmd+N` | New question |
 | `Cmd+G` | Generate questions (for the current mode) |
 | `Cmd+Z` | Undo in the editor |
@@ -157,7 +169,7 @@ another question.
 
 Press **Reset…** in the toolbar, or use **Questions → Reset Progress…**:
 
-- **Reset This Question** clears that question's attempts, its `[done]` mark and
+- **Reset This Question** clears that question's attempts, its ✓ in the sidebar and
   the answer you typed.
 - **Reset All Progress…** does the same for every question. It asks you to
   confirm first.
@@ -173,7 +185,7 @@ in:
 1. Pick **Easy**, **Medium**, **Hard** or **Mixed**.
 2. Pick how many questions, from 1 to 20.
 3. Press **Randomise** to get a new set. Click a row to read the full question.
-4. Press **Save N Questions**. They appear in the list marked `(generated)`.
+4. Press **Save N Questions**. They appear in the sidebar marked `· generated`.
 
 SQL questions are built from templates using values that really exist in the
 practice data (real salaries, categories, statuses and names). Python
@@ -290,6 +302,33 @@ then:
 
 **Test Solution** runs it. A question only saves once it runs cleanly.
 
+## Progress report
+
+Press **Report…** in the toolbar (or **Questions → Progress Report…**):
+
+1. Choose the set: **Questions I made or generated** (the default when you
+   have some) or **All questions** in the current mode.
+2. Tick **Include hints and correct answers** only if you've finished trying
+   them. Otherwise the report doesn't give the answers away.
+3. Press **Generate Report**. It opens in your web browser and is saved in
+   `user_data/reports/`.
+
+The report shows:
+
+- **Totals:** solved, not solved yet, not tried, attempts, and how often you
+  solved a question on the first try.
+- **By topic:** solved count, wrong attempts, and the lesson to review,
+  weakest topics first.
+- **Where you went wrong:** for every question with a wrong attempt, your
+  last wrong answer and what was wrong with it, e.g. "expected 2 columns, you
+  returned 1", a syntax error, "your function returned None every time. Did
+  you forget `return`?", or the first line of output that differs. The app
+  re-checks the saved answer to work this out.
+- **Everything else:** questions you solved without a mistake, or haven't
+  tried.
+
+The page follows your light or dark mode, and prints cleanly too.
+
 ## Lessons
 
 The **Lesson** tab (and the **Lesson** button on the question card) shows the
@@ -342,6 +381,7 @@ user_data/
 │   └── custom-<slug>-<id>.json
 ├── history.jsonl           one line per checked attempt
 ├── history_backups/        automatic copies made before each reset
+├── reports/                progress reports made with Report… (HTML)
 └── launch.log              startup output when launched from SQL Helper.app
 ```
 
@@ -409,6 +449,7 @@ SQL Helper/
 │   ├── python_grader.py         grades Python answers, plain-English error hints
 │   ├── python_generator.py      random Python question templates + validation
 │   ├── python_view.py           Python mode tabs, Visualise tab, Python question dialog
+│   ├── report.py                progress report: re-checks wrong answers, writes HTML
 │   ├── grader.py                compares results and writes feedback
 │   ├── questions.py             Question model, custom-question files, history
 │   └── data/                    built-in questions (builtin_questions.json = SQL,

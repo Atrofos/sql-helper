@@ -75,8 +75,9 @@ class Worker:
 
 
 def readonly_text(master, height: int = 8) -> tk.Text:
-    text = tk.Text(master, height=height, font=mono(12), wrap="word", borderwidth=1,
-                   relief="solid", padx=8, pady=6, state="disabled")
+    text = tk.Text(master, height=height, font=mono(12), wrap="word", borderwidth=0,
+                   relief="flat", highlightthickness=1, highlightbackground="#8c959f",
+                   padx=10, pady=6, state="disabled")
     return text
 
 
@@ -121,8 +122,9 @@ class VisualiserView(ttk.Frame):
 
         panes = ttk.PanedWindow(self, orient="vertical")
         panes.pack(fill="both", expand=True)
-        self.code = tk.Text(panes, height=8, font=mono(12), wrap="none", borderwidth=1,
-                            relief="solid", padx=6, pady=4, state="disabled")
+        self.code = tk.Text(panes, height=8, font=mono(12), wrap="none", borderwidth=0,
+                            relief="flat", highlightthickness=1, highlightbackground="#8c959f",
+                            padx=8, pady=4, state="disabled")
         # Explicit foreground + background keep the highlight readable in light and dark mode.
         self.code.tag_configure("current", background="#ffe58f", foreground="#1f2328")
         self.code.tag_configure("lineno", foreground="#8c959f")

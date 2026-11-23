@@ -383,8 +383,9 @@ class LessonView(ttk.Frame):
         self.summary.pack(anchor="w", fill="x")
         ttk.Label(self, text="Example", font=tkfont.nametofont("TkDefaultFont")).pack(
             anchor="w", pady=(8, 0))
-        self.example = tk.Text(self, height=4, font=mono(12), wrap="none", borderwidth=1,
-                               relief="solid", padx=8, pady=6)
+        self.example = tk.Text(self, height=4, font=mono(12), wrap="none", borderwidth=0,
+                               relief="flat", highlightthickness=1, highlightbackground="#8c959f",
+                               padx=10, pady=6)
         self.example.pack(fill="x")
         self.diagram = ScrollCanvas(self)
         self.diagram.pack(fill="both", expand=True, pady=(10, 0))

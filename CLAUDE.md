@@ -72,10 +72,25 @@ more powerful. If a feature mainly helps advanced users, ask the owner first.
 | `python_grader.py` | Grade function / output answers; error hints | No |
 | `python_generator.py` | Random Python question templates → validated `Question`s | No |
 | `lessons.py` | Lesson cards as data (text, example, diagram spec) | No |
+| `report.py` | Progress report: re-grade wrong answers, topic stats, HTML | No |
 | `app.py` | Main window, SQL tabs, mode switch, shared dialogs | Yes |
 | `python_view.py` | Python tabs, Visualise tab, Python question dialog, worker thread | Yes |
 | `lesson_view.py` | Draws lesson diagrams and visualiser values on a canvas | Yes |
 
+- **Questions are chosen from `QuestionSidebar`** (in app.py): a Treeview
+  grouped by difficulty. `self.visible` is sorted in the same order, so Prev/Next
+  match what the sidebar shows. Programmatic highlighting goes through
+  `sidebar.select()`, which doesn't fire a "pick".
+- **Pane widths are clamped** in `_clamp_sashes` (ttk.PanedWindow has no
+  per-pane minimum): sidebar between `SIDEBAR_MIN` and `SIDEBAR_MAX`, editor and
+  results at least `WORK_MIN`. It runs after drag steps and window resizes.
+  Keep the window's `minsize` at least `SIDEBAR_MIN + 2 * WORK_MIN` plus padding.
+- Icon-only buttons (like the sidebar toggle) must have a `Tooltip` naming
+  the action, and the actions they trigger need a keyboard route too (⌘[ / ⌘]
+  for Prev/Next).
+- **Prev/Next must always be on screen**: in the sidebar, or in the bottom row
+  (`bottom_nav`) while the sidebar is hidden. Change the Next highlight only via
+  `_set_next()`, which updates both copies.
 - **Keep the UI thin.** Logic that could be tested without a window belongs in
   the non-UI modules and gets a unit test. The three UI modules should only
   translate between widgets and those modules.
@@ -147,6 +162,21 @@ Built-in questions are in `sql_helper/data/builtin_questions.json`.
 - *Output* questions: the Visualise tab stays locked until solved or revealed,
   because stepping through would show the answer.
 
+## Report rules
+
+- History stores answers, not feedback, so `report.build_report` re-grades the
+  **last wrong answer** per question with the same graders. Keep it using the
+  graders (don't duplicate grading logic).
+- **Hints and correct answers stay out unless `include_answers`** is ticked,
+  because hints can give the answer away (same rule as the hidden expected
+  result).
+- HTML is standalone: inline CSS, no scripts, no external requests, light/dark
+  via `prefers-color-scheme`. **Escape all learner text** with `html.escape`
+  (`ReportTests.test_html_escapes_learner_text`).
+- SQL reports run on the Tk thread (SQLite connections are tied to their
+  thread). Python reports run on the worker, because they start subprocesses.
+- Reports are saved in `user_data/reports/` via `QuestionStore.save_report`.
+
 ## Lesson rules
 
 - Lessons live in `lessons.py` as data. Diagrams use one of the drawing types
@@ -164,7 +194,8 @@ Built-in questions are in `sql_helper/data/builtin_questions.json`.
 ## Run vs Check Answer (owner's requirement)
 
 Pressing **Run** with a correct result counts as solving the question: it's
-recorded, the expected result is revealed, and **Next >** is highlighted (the
+recorded, the expected result is revealed, and **Next ›** (bottom of the
+sidebar) is highlighted (the
 blue default button with a ✓). Run never shows "wrong" feedback, so
 half-finished queries aren't marked down. **Check Answer** always grades and
 explains. A successful run clears a stale error message.
@@ -210,7 +241,7 @@ These are standard practices, applied to this project:
 - **Least privilege.** User SQL gets only the database permissions it needs
   (read).
 - **Accessibility.** Don't rely on color alone. Correct/incorrect feedback also
-  has text, and solved questions show `[done]`. Every main action has a button,
+  has text, and solved questions show a ✓ in the sidebar. Every main action has a button,
   and the frequent ones also have keyboard shortcuts.
 - **Respect the platform.** Use `Cmd` shortcuts on macOS (`MOD` in `app.py`),
   native ttk widgets, and system fonts. Avoid hard-coded background colors

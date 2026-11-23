@@ -234,3 +234,50 @@ class LessonTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportTests(unittest.TestCase):
+    def setUp(self):
+        from sql_helper.report import build_report, to_html
+        self.build, self.html = build_report, to_html
+        self.tmp = tempfile.TemporaryDirectory()
+        self.store = QuestionStore(data_dir=Path(self.tmp.name))
+        self.db = PracticeDatabase()
+        self.addCleanup(self.db.close)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_sql_report_explains_wrong_answers(self):
+        qs = [q for q in self.store.load_all() if q.mode == MODE_SQL][:3]
+        self.store.record_attempt(qs[1].id, "SELECT first_name FROM employees", False)
+        self.store.record_attempt(qs[0].id, "SELECT * FROM departments", True)
+        rep = self.build(qs, self.store.load_history(), self.db, "t", MODE_SQL)
+        wrong = next(i for i in rep.items if i.question.id == qs[1].id)
+        self.assertEqual(wrong.status, "Not solved yet")
+        self.assertIn("columns", wrong.problem)
+        self.assertEqual(rep.solved, 1)
+        self.assertEqual(rep.items[0].question.id, qs[1].id)   # struggling questions first
+        self.assertTrue(rep.items[[i.question.id for i in rep.items].index(qs[0].id)].first_try)
+
+    def test_python_report_and_hidden_answers(self):
+        q = next(q for q in self.store.load_all() if q.id == "py01-double")
+        self.store.record_attempt(q.id, "def double(n):\n    print(n * 2)\n", False)
+        rep = self.build([q], self.store.load_history(), self.db, "t", MODE_PYTHON)
+        self.assertIn("forget `return`", " ".join(rep.items[0].problem_details))
+        page = self.html(rep)
+        self.assertNotIn("return n * 2", page)          # answer hidden by default
+        self.assertNotIn("expected 4", page)
+        with_answers = self.html(self.build([q], self.store.load_history(), self.db, "t",
+                                            MODE_PYTHON, include_answers=True))
+        self.assertIn("return n * 2", with_answers)
+
+    def test_html_escapes_learner_text(self):
+        q = [q for q in self.store.load_all() if q.mode == MODE_SQL][0]
+        self.store.record_attempt(q.id, "<script>alert(1)</script>", False)
+        page = self.html(self.build([q], self.store.load_history(), self.db, "t", MODE_SQL))
+        self.assertNotIn("<script>", page)
+        self.assertIn("&lt;script&gt;", page)
+
+    def test_save_report(self):
+        path = self.store.save_report(MODE_SQL, "<html></html>")
+        self.assertEqual(path.parent.name, "reports")
+        self.assertTrue(path.read_text().startswith("<html>"))

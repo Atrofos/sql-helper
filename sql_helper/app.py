@@ -25,6 +25,7 @@ from .lesson_view import LessonView
 from .lessons import lesson_for, lessons_for_mode
 from .python_generator import generate_python_questions
 from .python_view import PythonPanel, PythonQuestionDialog
+from .report import build_report, to_html
 from .questions import (DIFFICULTIES, KIND_FUNCTION, KIND_OUTPUT, MODE_PYTHON, MODE_SQL,
                         Question, QuestionStore)
 
@@ -37,6 +38,14 @@ LIVE_DELAY_MS = 350                           # pause after typing before live p
 MAX_DISPLAY_ROWS = 500                        # rows drawn in a grid (Treeview gets slow beyond this)
 FREE_PRACTICE = "Free practice (no question)"
 PY_INDENT = "    "
+SIDEBAR_WIDTH = 280
+SIDEBAR_MIN, SIDEBAR_MAX = 190, 440   # dragging the divider can't go past these
+WORK_MIN = 380                        # nor squeeze the editor or results below this
+PREV_KEYS = "\u2318[" if IS_MAC else "Ctrl+["
+NEXT_KEYS = "\u2318]" if IS_MAC else "Ctrl+]"
+ICON_GREY = "#8c959f"                 # mid grey reads well in light and dark mode
+FOCUS_BLUE = "#0a84ff"                # macOS accent blue, used for the editor's focus ring
+LEVEL_COLOURS = {"Easy": "#2da44e", "Medium": "#d4a72c", "Hard": "#cf222e"}
 PANE_WIDTH, PANE_HEIGHT = 600, 560            # starting size of each half; both stretch equally
 
 GOOD = "#1a7f37"
@@ -142,7 +151,9 @@ class SqlEditor(ttk.Frame):
     def __init__(self, master, on_change: Callable[[], None]) -> None:
         super().__init__(master)
         self.text = tk.Text(self, wrap="word", undo=True, height=10, font=mono_font(),
-                            padx=8, pady=8, borderwidth=1, relief="solid")
+                            padx=10, pady=8, borderwidth=0, relief="flat",
+                            highlightthickness=1, highlightbackground=ICON_GREY,
+                            highlightcolor=FOCUS_BLUE)
         scroll = ttk.Scrollbar(self, orient="vertical", command=self.text.yview)
         self.text.configure(yscrollcommand=scroll.set)
         self.text.grid(row=0, column=0, sticky="nsew")
@@ -392,7 +403,7 @@ class ResetDialog(tk.Toplevel):
         body = ttk.Frame(self, padding=16)
         body.pack(fill="both", expand=True)
         ttk.Label(body, wraplength=420, justify="left", text=(
-            "Resetting clears your saved attempts (the [done] marks and attempt history) "
+            "Resetting clears your saved attempts (the \u2713 marks and attempt history) "
             "and the answer you've typed. Your questions are not deleted.\n\n"
             "A backup of the history is saved in user_data/history_backups/ first, "
             "so nothing is lost for good.")).pack(anchor="w")
@@ -541,8 +552,313 @@ class GenerateDialog(tk.Toplevel):
         self.destroy()
         self.app.reload_questions(select_id=first)
         self.app._set_feedback(f"Added {saved} generated question(s). They're marked "
-                               "(generated) in the question list. Remove them any time with "
+                               "'generated' in the sidebar. Remove them any time with "
                                "Questions > Delete All Generated Questions.")
+
+
+class ReportDialog(tk.Toplevel):
+    """Build a 'where you went wrong' report for a set of questions and save it as HTML."""
+
+    def __init__(self, app: "SqlHelperApp") -> None:
+        super().__init__(app.root)
+        self.app = app
+        self.path: Path | None = None
+        mode_name = "Python" if app.mode == MODE_PYTHON else "SQL"
+        self.title(f"{mode_name} Progress Report")
+        self.transient(app.root)
+        self.geometry("620x460")
+        self.minsize(520, 400)
+        mine = [q for q in app.visible if q.is_custom]
+        self.sets = {"mine": mine, "all": list(app.visible)}
+
+        body = ttk.Frame(self, padding=16)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, wraplength=560, justify="left", text=(
+            "See where you went wrong: for each question, your last wrong answer is checked "
+            "again and explained, with the topics and lessons worth reviewing.")).pack(anchor="w")
+
+        ttk.Label(body, text="Questions to include:").pack(anchor="w", pady=(14, 4))
+        self.scope = tk.StringVar(value="mine" if mine else "all")
+        mine_btn = ttk.Radiobutton(body, variable=self.scope, value="mine",
+                                   text=f"Questions I made or generated ({len(mine)})")
+        mine_btn.pack(anchor="w")
+        if not mine:
+            mine_btn.configure(state="disabled")
+        ttk.Radiobutton(body, variable=self.scope, value="all",
+                        text=f"All {mode_name} questions ({len(app.visible)})").pack(anchor="w")
+        self.answers = tk.BooleanVar(value=False)
+        ttk.Checkbutton(body, variable=self.answers, text=(
+            "Include hints and correct answers (leave off if you still want to try them)")).pack(
+            anchor="w", pady=(10, 0))
+
+        self.summary = ttk.Label(body, wraplength=560, justify="left", text=(
+            "" if mine else "You haven't made or generated any questions in this mode yet, "
+                            "so the report will cover all questions."))
+        self.summary.pack(anchor="w", fill="x", pady=(14, 0))
+
+        buttons = ttk.Frame(body)
+        buttons.pack(side="bottom", anchor="e", pady=(12, 0))
+        ttk.Button(buttons, text="Close", command=self.destroy).pack(side="left", padx=4)
+        self.finder_btn = ttk.Button(buttons, text="Show in Finder" if IS_MAC else "Show File",
+                                     command=self._reveal, state="disabled")
+        self.finder_btn.pack(side="left", padx=4)
+        self.open_btn = ttk.Button(buttons, text="Open Report", command=self._open, state="disabled")
+        self.open_btn.pack(side="left", padx=4)
+        self.make_btn = ttk.Button(buttons, text="Generate Report", command=self._generate)
+        self.make_btn.pack(side="left", padx=4)
+        self.bind("<Escape>", lambda _e: self.destroy())
+
+    def _generate(self) -> None:
+        questions = self.sets[self.scope.get()]
+        if not questions:
+            self.summary.configure(foreground=BAD, text="There are no questions in this set.")
+            return
+        mode, include = self.app.mode, self.answers.get()
+        scope_name = "My questions" if self.scope.get() == "mine" else "All questions"
+        title = f"{'Python' if mode == MODE_PYTHON else 'SQL'} progress report: {scope_name.lower()}"
+        history = self.app.store.load_history()
+        self.make_btn.configure(state="disabled")
+        self.summary.configure(foreground="", text="Checking your answers...")
+
+        def job():
+            report = build_report(questions, history, self.app.db, title, mode, include)
+            return report, to_html(report)
+
+        if mode == MODE_PYTHON:
+            # Python answers are re-run in subprocesses, so do it off the Tk thread.
+            self.app.py.worker.submit("report", job, self._done)
+        else:
+            # SQLite connections belong to the thread that made them; SQL checks are fast.
+            self._done(job())
+
+    def _done(self, result) -> None:
+        if not self.winfo_exists():
+            return
+        self.make_btn.configure(state="normal")
+        if not isinstance(result, tuple):
+            self.summary.configure(foreground=BAD, text=getattr(result, "error", "Report failed."))
+            return
+        report, page = result
+        try:
+            self.path = self.app.store.save_report(report.mode, page)
+        except OSError as exc:
+            self.summary.configure(foreground=BAD, text=f"Couldn't save the report: {exc}")
+            return
+        self.summary.configure(foreground="", text="\n".join(report.summary_lines()) +
+                               f"\n\nSaved as reports/{self.path.name} in your data folder.")
+        self.open_btn.configure(state="normal")
+        self.finder_btn.configure(state="normal")
+        self._open()
+
+    def _open(self) -> None:
+        if self.path:
+            opener = ["open"] if IS_MAC else (["start", ""] if sys.platform == "win32" else ["xdg-open"])
+            try:
+                subprocess.Popen(opener + [str(self.path)], shell=sys.platform == "win32")
+            except OSError:
+                messagebox.showinfo("Report saved", str(self.path), parent=self)
+
+    def _reveal(self) -> None:
+        if self.path:
+            try:
+                subprocess.Popen(["open", "-R", str(self.path)] if IS_MAC
+                                 else (["xdg-open", str(self.path.parent)]))
+            except OSError:
+                messagebox.showinfo("Report saved", str(self.path), parent=self)
+
+
+class Tooltip:
+    """A small label that appears when the mouse rests on a widget (for icon-only buttons)."""
+
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget, self.text = widget, text
+        self.tip: tk.Toplevel | None = None
+        self.job: str | None = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def set(self, text: str) -> None:
+        self.text = text
+
+    def _schedule(self, _e=None) -> None:
+        self.job = self.widget.after(500, self._show)
+
+    def _show(self) -> None:
+        x = self.widget.winfo_rootx() + 4
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        self.tip = tk.Toplevel(self.widget)
+        self.tip.wm_overrideredirect(True)
+        self.tip.wm_geometry(f"+{x}+{y}")
+        ttk.Label(self.tip, text=self.text, padding=(6, 3), relief="solid", borderwidth=1).pack()
+
+    def _hide(self, _e=None) -> None:
+        if self.job:
+            self.widget.after_cancel(self.job)
+            self.job = None
+        if self.tip is not None:
+            self.tip.destroy()
+            self.tip = None
+
+
+def sidebar_icon(filled: bool) -> tk.PhotoImage:
+    """A 20x16 'sidebar' symbol: a window outline with a left panel (filled when shown)."""
+    img = tk.PhotoImage(width=20, height=16)
+    img.put(ICON_GREY, to=(1, 1, 19, 3))       # top edge (2px)
+    img.put(ICON_GREY, to=(1, 13, 19, 15))     # bottom edge
+    img.put(ICON_GREY, to=(1, 1, 3, 15))       # left edge
+    img.put(ICON_GREY, to=(17, 1, 19, 15))     # right edge
+    img.put(ICON_GREY, to=(7, 1, 9, 15))       # divider between panel and content
+    if filled:
+        img.put(ICON_GREY, to=(3, 3, 7, 13))   # the panel itself
+    return img
+
+
+def check_icon(colour: str = "#2da44e") -> tk.PhotoImage:
+    """A 14x14 tick drawn pixel by pixel (an image keeps titles readable when selected)."""
+    img = tk.PhotoImage(width=14, height=14)
+    points = [(2, 7), (5, 10), (11, 3)]
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        steps = max(abs(x2 - x1), abs(y2 - y1))
+        for t in range(steps + 1):
+            x = round(x1 + (x2 - x1) * t / steps)
+            y = round(y1 + (y2 - y1) * t / steps)
+            img.put(colour, to=(x, y, x + 2, y + 2))
+    return img
+
+
+def dot_icon(colour: str, size: int = 10) -> tk.PhotoImage:
+    img = tk.PhotoImage(width=size + 4, height=size + 4)
+    r = size / 2
+    for y in range(size):
+        for x in range(size):
+            if (x + 0.5 - r) ** 2 + (y + 0.5 - r) ** 2 <= r * r:
+                img.put(colour, (x + 2, y + 2))
+    return img
+
+
+class QuestionSidebar(ttk.Frame):
+    """The question list down the left of the window, grouped by difficulty."""
+
+    def __init__(self, master, on_pick: Callable[[int | None], None],
+                 on_step: Callable[[int], None]) -> None:
+        super().__init__(master, padding=(0, 0, 8, 0), width=SIDEBAR_WIDTH, height=PANE_HEIGHT)
+        self.pack_propagate(False)
+        self.on_pick = on_pick
+        self.questions: list[Question] = []
+        self.solved: set[str] = set()
+        self.current: int | None = None
+
+        head_font = tkfont.nametofont("TkDefaultFont").copy()
+        head_font.configure(weight="bold")
+        ttk.Label(self, text="Questions", font=head_font).pack(anchor="w")
+        self.search_var = tk.StringVar()
+        search = ttk.Entry(self, textvariable=self.search_var)
+        search.pack(fill="x", pady=(6, 6))
+        self._placeholder(search)
+        self.search_var.trace_add("write", lambda *_: self._rebuild())
+
+        # Prev / Next sit at the bottom of the sidebar (packed before the list so
+        # the list takes the remaining height).
+        nav = ttk.Frame(self)
+        nav.pack(side="bottom", fill="x", pady=(8, 0))
+        nav.columnconfigure((0, 1), weight=1, uniform="nav")
+        self.prev_btn = ttk.Button(nav, text="\u2039 Prev", command=lambda: on_step(-1))
+        self.prev_btn.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        self.next_btn = ttk.Button(nav, text="Next \u203a", command=lambda: on_step(1))
+        self.next_btn.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        Tooltip(self.prev_btn, f"Previous question ({PREV_KEYS})")
+        Tooltip(self.next_btn, f"Next question ({NEXT_KEYS})")
+
+        box = ttk.Frame(self)
+        box.pack(fill="both", expand=True)
+        ttk.Style(self).configure("Sidebar.Treeview", rowheight=26)
+        self.tree = ttk.Treeview(box, show="tree", selectmode="browse", style="Sidebar.Treeview")
+        self.icons = {"done": check_icon(), "todo": tk.PhotoImage(width=14, height=14),
+                      **{level: dot_icon(c) for level, c in LEVEL_COLOURS.items()}}
+        scroll = ttk.Scrollbar(box, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        self.tree.column("#0", width=SIDEBAR_WIDTH - 40)
+        self.tree.tag_configure("group", font=head_font)
+        self.tree.bind("<<TreeviewSelect>>", self._selected)
+        self.empty = ttk.Label(self, text="", justify="left")
+        self.empty.pack(anchor="w")
+
+    def _placeholder(self, entry: ttk.Entry) -> None:
+        """Grey 'Search...' hint while the box is empty and unfocused."""
+        hint = "Search questions..."
+
+        def show(_e=None):
+            if not self.search_var.get():
+                entry.configure(foreground="#8c959f")
+                entry.insert(0, hint)
+                self._hinting = True
+
+        def hide(_e=None):
+            if getattr(self, "_hinting", False):
+                self._hinting = False
+                entry.delete(0, "end")
+                entry.configure(foreground="")
+
+        entry.bind("<FocusIn>", hide)
+        entry.bind("<FocusOut>", show)
+        self._hinting = False
+        show()
+
+    def query(self) -> str:
+        return "" if getattr(self, "_hinting", False) else self.search_var.get().strip().lower()
+
+    def populate(self, questions: list[Question], solved: set[str], current: int | None) -> None:
+        self.questions, self.solved, self.current = questions, solved, current
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        tree = self.tree
+        tree.delete(*tree.get_children())
+        text = self.query()
+        tree.insert("", "end", iid="free", text="\u270e  " + FREE_PRACTICE)
+        shown = 0
+        for level in DIFFICULTIES:
+            members = [(i, q) for i, q in enumerate(self.questions) if q.difficulty == level]
+            matches = [(i, q) for i, q in members
+                       if not text or text in q.title.lower() or text in q.topic.lower()]
+            if not matches:
+                continue
+            done = sum(1 for _, q in members if q.id in self.solved)
+            group = tree.insert("", "end", iid=f"g:{level}", open=True, tags=("group",),
+                                image=self.icons[level], text=f" {level}    {done} / {len(members)}")
+            for i, q in matches:
+                solved = q.id in self.solved
+                suffix = "  \u00b7 generated" if q.generated else ("  \u00b7 yours" if q.is_custom else "")
+                tree.insert(group, "end", iid=f"q:{i}", image=self.icons["done" if solved else "todo"],
+                            text=f" {q.title}{suffix}")
+                shown += 1
+        self.empty.configure(text="No questions match your search." if text and not shown else "")
+        self.select(self.current)
+
+    def select(self, index: int | None) -> None:
+        """Highlight a question without treating it as a new click."""
+        self.current = index
+        iid = "free" if index is None else f"q:{index}"
+        if self.tree.exists(iid):
+            if self.tree.selection() != (iid,):
+                self.tree.selection_set(iid)
+            self.tree.see(iid)
+        else:
+            self.tree.selection_set(())
+
+    def _selected(self, _event=None) -> None:
+        sel = self.tree.selection()
+        if not sel or sel[0].startswith("g:"):
+            if sel:   # a group heading: put the highlight back on the current question
+                self.select(self.current)
+            return
+        index = None if sel[0] == "free" else int(sel[0][2:])
+        if index != self.current:
+            self.current = index
+            self.on_pick(index)
 
 
 # ---------------------------------------------------------------------------
@@ -563,7 +879,8 @@ class SqlHelperApp:
         self._feedback_is_error = False            # lets a successful run clear an old error
 
         root.title("SQL Helper: SQL & Python Interview Practice")
-        root.geometry("1280x780")
+        width = min(1500, max(1180, root.winfo_screenwidth() - 60))
+        root.geometry(f"{width}x800")
         root.minsize(1120, 640)
 
         self.live_var = tk.BooleanVar(value=True)
@@ -591,6 +908,7 @@ class SqlHelperApp:
                           command=self.delete_generated)
         qmenu.add_separator()
         qmenu.add_command(label="Reset Progress...", command=lambda: ResetDialog(self))
+        qmenu.add_command(label="Progress Report...", command=lambda: ReportDialog(self))
         qmenu.add_command(label="Attempt History...", command=lambda: HistoryWindow(self))
         qmenu.add_command(label="Open Data Folder", command=self.open_data_folder)
         menubar.add_cascade(label="Questions", menu=qmenu)
@@ -604,29 +922,38 @@ class SqlHelperApp:
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
 
-        # Top bar: question picker and progress.
+        # Top bar: sidebar toggle, mode switch, navigation and progress.
         top = ttk.Frame(outer)
         top.pack(fill="x", pady=(0, 8))
         self.progress = ttk.Label(top)
         self.progress.pack(side="right")   # packed first so it keeps its space when narrow
+        self._icons = {True: sidebar_icon(True), False: sidebar_icon(False)}  # keep references
+        self.sidebar_btn = ttk.Button(top, image=self._icons[True], command=self.toggle_sidebar,
+                                      style="Toolbutton", takefocus=False)
+        self.sidebar_btn.pack(side="left", padx=(0, 10))
+        self.sidebar_tip = Tooltip(self.sidebar_btn, "Hide the question list")
         for value, label in ((MODE_SQL, "SQL"), (MODE_PYTHON, "Python")):
             ttk.Radiobutton(top, text=label, value=value, variable=self.mode_var,
                             command=self._mode_changed).pack(side="left", padx=(0, 6))
         ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=(2, 10))
-        ttk.Label(top, text="Question:").pack(side="left")
-        self.picker = ttk.Combobox(top, state="readonly", width=30)
-        self.picker.pack(side="left", padx=6)
-        self.picker.bind("<<ComboboxSelected>>", lambda _e: self._picked())
-        ttk.Button(top, text="< Prev", command=lambda: self._step(-1)).pack(side="left")
-        self.next_btn = ttk.Button(top, text="Next >", width=9, command=lambda: self._step(1))
-        self.next_btn.pack(side="left", padx=4)
         ttk.Button(top, text="+ New", command=self.new_question).pack(side="left", padx=4)
         ttk.Button(top, text="Generate...",
                    command=lambda: GenerateDialog(self)).pack(side="left")
         ttk.Button(top, text="Reset...", command=lambda: ResetDialog(self)).pack(side="left", padx=4)
+        ttk.Button(top, text="Report...", command=lambda: ReportDialog(self)).pack(side="left")
 
         panes = ttk.PanedWindow(outer, orient="horizontal")
         panes.pack(fill="both", expand=True)
+        self.panes = panes
+        self.sidebar = QuestionSidebar(panes, on_pick=self._select, on_step=self._step)
+        panes.add(self.sidebar, weight=0)
+        # ttk.PanedWindow has no minimum pane size, so clamp the dividers after
+        # every drag step and resize (after_idle runs once ttk has moved them).
+        self._work_ratio = 0.5        # editor's share of the editor+results width
+        self._last_width = 0
+        panes.bind("<B1-Motion>", lambda _e: self.root.after_idle(self._clamp_sashes), add="+")
+        panes.bind("<ButtonRelease-1>", lambda _e: self.root.after_idle(self._drag_done), add="+")
+        panes.bind("<Configure>", lambda _e: self.root.after_idle(self._resized), add="+")
 
         # Left: question + editor + feedback.
         # Both panes get a fixed requested size and don't propagate their children's
@@ -648,16 +975,17 @@ class SqlHelperApp:
         self.q_prompt.pack(anchor="w", fill="x")
         card.bind("<Configure>", lambda e: self.q_prompt.configure(wraplength=max(e.width - 30, 200)))
         # Code shown with the question ("predict the output" questions only).
-        self.q_code = tk.Text(card, height=5, font=mono_font(), wrap="none", borderwidth=1,
-                              relief="solid", padx=8, pady=6, state="disabled")
+        self.q_code = tk.Text(card, height=5, font=mono_font(), wrap="none", borderwidth=0,
+                              relief="flat", highlightthickness=1, highlightbackground=ICON_GREY,
+                              padx=10, pady=6, state="disabled")
         q_buttons = ttk.Frame(card)
         q_buttons.pack(anchor="w", pady=(8, 0))
         self.q_buttons = q_buttons
-        self.hint_btn = ttk.Button(q_buttons, text="Show Hint", command=self.show_hint)
+        self.hint_btn = ttk.Button(q_buttons, text="Hint", command=self.show_hint)
         self.hint_btn.pack(side="left")
-        self.solution_btn = ttk.Button(q_buttons, text="Reveal Solution", command=self.reveal_solution)
+        self.solution_btn = ttk.Button(q_buttons, text="Solution", command=self.reveal_solution)
         self.solution_btn.pack(side="left", padx=6)
-        self.card_expected_btn = ttk.Button(q_buttons, text="Show Expected Result",
+        self.card_expected_btn = ttk.Button(q_buttons, text="Show Expected",
                                             command=lambda: self.toggle_expected(select_tab=True))
         self.card_expected_btn.pack(side="left")
         ttk.Button(q_buttons, text="Lesson", command=self.show_lesson).pack(side="left", padx=6)
@@ -707,8 +1035,21 @@ class SqlHelperApp:
         self.tabs.add(self.sql_lesson, text="Lesson")
         self.py.lesson_view.set_lessons(lessons_for_mode(MODE_PYTHON))
 
-        self.status = ttk.Label(outer, anchor="w")
-        self.status.pack(fill="x", pady=(8, 0))
+        # Bottom row: status text, plus Prev/Next while the sidebar is hidden.
+        bottom = ttk.Frame(outer)
+        bottom.pack(fill="x", pady=(8, 0))
+        self.bottom_nav = ttk.Frame(bottom)
+        bottom_prev = ttk.Button(self.bottom_nav, text="\u2039 Prev", width=9,
+                                 command=lambda: self._step(-1))
+        bottom_prev.pack(side="left", padx=(0, 6))
+        bottom_next = ttk.Button(self.bottom_nav, text="Next \u203a", width=9,
+                                 command=lambda: self._step(1))
+        bottom_next.pack(side="left")
+        Tooltip(bottom_prev, f"Previous question ({PREV_KEYS})")
+        Tooltip(bottom_next, f"Next question ({NEXT_KEYS})")
+        self.next_btns = [self.sidebar.next_btn, bottom_next]   # kept in sync
+        self.status = ttk.Label(bottom, anchor="w")
+        self.status.pack(side="left", fill="x", expand=True)
 
     def _build_tables_tab(self, master) -> ttk.Frame:
         frame = ttk.Frame(master, padding=(0, 4))
@@ -743,6 +1084,8 @@ class SqlHelperApp:
             widget.bind(f"<{MOD}-Return>", lambda _e: (self.run_query(), "break")[1])
             widget.bind(f"<{MOD}-Shift-Return>", lambda _e: (self.check_answer(), "break")[1])
         self.root.bind(f"<{MOD}-n>", lambda _e: self.new_question())
+        self.root.bind(f"<{MOD}-bracketleft>", lambda _e: self._step(-1))
+        self.root.bind(f"<{MOD}-bracketright>", lambda _e: self._step(1))
         self.root.bind(f"<{MOD}-g>", lambda _e: GenerateDialog(self))
 
     # ---- questions -----------------------------------------------------
@@ -758,7 +1101,7 @@ class SqlHelperApp:
         if target is not None and target.mode != self.mode:
             self._switch_mode(target.mode)
         self._filter()
-        self._refresh_picker()
+        self._refresh_list()
         keep = select_id or (self.current.id if self.current else None)
         index = next((i for i, q in enumerate(self.visible) if q.id == keep),
                      0 if self.visible else None)
@@ -766,7 +1109,10 @@ class SqlHelperApp:
 
     # ---- modes -----------------------------------------------------------
     def _filter(self) -> None:
-        self.visible = [q for q in self.questions if q.mode == self.mode]
+        """This mode's questions, ordered Easy -> Medium -> Hard (the sidebar's order)."""
+        rank = {level: i for i, level in enumerate(DIFFICULTIES)}
+        self.visible = sorted((q for q in self.questions if q.mode == self.mode),
+                              key=lambda q: rank.get(q.difficulty, len(rank)))
 
     def _draft_key(self, q: Question | None) -> str:
         return q.id if q else f"free:{self.mode}"
@@ -775,7 +1121,7 @@ class SqlHelperApp:
         if self.mode_var.get() != self.mode:
             self._switch_mode(self.mode_var.get())
             self._filter()
-            self._refresh_picker()
+            self._refresh_list()
             self._select(0 if self.visible else None, save_draft=False)
 
     def _switch_mode(self, mode: str) -> None:
@@ -794,16 +1140,99 @@ class SqlHelperApp:
     def store_solved(self, q: Question) -> bool:
         return q.id in self.store.solved_ids()
 
-    def _refresh_picker(self) -> None:
+    def _current_index(self) -> int | None:
+        return self.visible.index(self.current) if self.current in self.visible else None
+
+    def _refresh_list(self) -> None:
         solved = self.store.solved_ids()
-        labels = [FREE_PRACTICE]
-        for q in self.visible:
-            mark = "[done]" if q.id in solved else "[    ]"
-            custom = "  (generated)" if q.generated else ("  (yours)" if q.is_custom else "")
-            labels.append(f"{mark}  {q.difficulty:<6}  {q.title}{custom}")
-        self.picker["values"] = labels
+        self.sidebar.populate(self.visible, solved, self._current_index())
         done = sum(1 for q in self.visible if q.id in solved)
         self.progress.configure(text=f"Solved {done} / {len(self.visible)}")
+
+    def sidebar_shown(self) -> bool:
+        return str(self.sidebar) in [str(pane) for pane in self.panes.panes()]
+
+    def toggle_sidebar(self) -> None:
+        shown = not self.sidebar_shown()
+        if shown:
+            self.panes.insert(0, self.sidebar, weight=0)
+            self.root.after_idle(lambda: self._set_sash(0, SIDEBAR_WIDTH))
+            self.root.after_idle(self._balance)
+        else:
+            self.panes.forget(self.sidebar)
+        # Prev/Next live in the sidebar; when it's hidden they move to the bottom row.
+        if shown:
+            self.bottom_nav.pack_forget()
+        else:
+            self.bottom_nav.pack(side="right", before=self.status)
+        self.sidebar_btn.configure(image=self._icons[shown])
+        self.sidebar_tip.set("Hide the question list" if shown else "Show the question list")
+        self.root.after_idle(self._clamp_sashes)
+
+    def _set_sash(self, index: int, pos: int) -> None:
+        try:
+            self.panes.sashpos(index, pos)
+        except tk.TclError:
+            pass   # not laid out yet
+
+    def _work_sash(self) -> int:
+        """Index of the divider between the editor and the results."""
+        return 1 if self.sidebar_shown() else 0
+
+    def _side_width(self) -> int:
+        return self.panes.sashpos(0) if self.sidebar_shown() else 0
+
+    def _balance(self) -> None:
+        """Place the editor/results divider at the remembered ratio."""
+        total = self.panes.winfo_width()
+        if total < 100:
+            return
+        try:
+            side = self._side_width()
+            self.panes.sashpos(self._work_sash(), int(side + self._work_ratio * (total - side)))
+        except tk.TclError:
+            return
+        self._clamp_sashes()
+
+    def _resized(self) -> None:
+        width = self.panes.winfo_width()
+        if width != self._last_width:
+            self._last_width = width
+            self._balance()
+
+    def _drag_done(self) -> None:
+        """Remember the split the user chose, so resizing the window keeps it."""
+        self._clamp_sashes()
+        total = self.panes.winfo_width()
+        try:
+            side = self._side_width()
+            if total - side > 0:
+                self._work_ratio = (self.panes.sashpos(self._work_sash()) - side) / (total - side)
+        except tk.TclError:
+            pass
+
+    def _clamp_sashes(self) -> None:
+        """Keep the sidebar, editor and results panes at usable widths."""
+        total = self.panes.winfo_width()
+        if total < 100:
+            return
+        try:
+            if self.sidebar_shown():
+                s0 = self.panes.sashpos(0)
+                side = max(SIDEBAR_MIN, min(SIDEBAR_MAX, s0, total - 2 * WORK_MIN))
+                if side != s0:
+                    self.panes.sashpos(0, side)
+                s1 = self.panes.sashpos(1)
+                mid = max(side + WORK_MIN, min(s1, total - WORK_MIN))
+                if mid != s1:
+                    self.panes.sashpos(1, mid)
+            else:
+                s0 = self.panes.sashpos(0)
+                mid = max(WORK_MIN, min(s0, total - WORK_MIN))
+                if mid != s0:
+                    self.panes.sashpos(0, mid)
+        except tk.TclError:
+            pass
 
     def _select(self, question_index: int | None, save_draft: bool = True) -> None:
         """question_index None means free practice."""
@@ -811,16 +1240,14 @@ class SqlHelperApp:
             self.drafts[self._draft_key(self.current)] = self.editor.get()
         self.current = None if question_index is None or not self.visible \
             else self.visible[question_index]
-        self.picker.current(0 if self.current is None else question_index + 1)
+        self.sidebar.select(self._current_index())
         self._show_current()
 
-    def _picked(self) -> None:
-        idx = self.picker.current()
-        self._select(None if idx <= 0 else idx - 1)
-
     def _step(self, delta: int) -> None:
-        idx = (self.picker.current() + delta) % len(self.picker["values"])
-        self._select(None if idx == 0 else idx - 1)
+        """Prev/Next in sidebar order: free practice, then Easy, Medium, Hard."""
+        order: list[int | None] = [None] + list(range(len(self.visible)))
+        here = order.index(self._current_index())
+        self._select(order[(here + delta) % len(order)])
 
     def _show_current(self) -> None:
         q = self.current
@@ -865,7 +1292,7 @@ class SqlHelperApp:
 
         self.expected_revealed = False
         self._render_expected()
-        self.next_btn.configure(default="normal", text="Next >")
+        self._set_next(done=False)
         key = self._draft_key(q)
         starter = q.starter if (q is not None and python and q.kind == KIND_FUNCTION) else ""
         self.editor.set(self.drafts.get(key) or starter)
@@ -899,21 +1326,17 @@ class SqlHelperApp:
 
     def _render_expected(self) -> None:
         q = self.current
+        short = "Hide Expected" if (q and self.expected_revealed) else "Show Expected"
+        self.card_expected_btn.configure(state="normal" if q else "disabled", text=short)
         if self.mode == MODE_PYTHON:
-            label = "Hide Expected Result" if self.expected_revealed else "Show Expected Result"
-            self.card_expected_btn.configure(state="normal" if q else "disabled",
-                                             text=label if q else "Show Expected Result")
             self.py.render_expected(q, self.expected_revealed)
             return
-        buttons = (self.expected_btn, self.card_expected_btn)
         if q is None:
-            for b in buttons:
-                b.configure(state="disabled", text="Show Expected Result")
+            self.expected_btn.configure(state="disabled", text="Show Expected Result")
             self.expected_grid.clear("No expected result in free practice.")
             return
         label = "Hide Expected Result" if self.expected_revealed else "Show Expected Result"
-        for b in buttons:
-            b.configure(state="normal", text=label)
+        self.expected_btn.configure(state="normal", text=label)
         if not self.expected_revealed:
             self.expected_grid.clear("Hidden so you can try first. Press the button above to compare.")
             return
@@ -954,8 +1377,7 @@ class SqlHelperApp:
         else:
             self.drafts.pop(question_id, None)
         affected = question_id is None or (self.current and self.current.id == question_id)
-        self._refresh_picker()
-        self.picker.current(0 if self.current is None else self.visible.index(self.current) + 1)
+        self._refresh_list()
         if affected:
             self.drafts.pop(self._draft_key(self.current), None)
             self._show_current()
@@ -1022,7 +1444,7 @@ class SqlHelperApp:
         if target is not None and target.mode != self.mode:
             self._switch_mode(target.mode)
             self._filter()
-            self._refresh_picker()
+            self._refresh_list()
         index = next((i for i, q in enumerate(self.visible) if q.id == question_id), None)
         self._select(index, save_draft=target is None or target.mode == self.mode)
         self.editor.set(sql)
@@ -1143,19 +1565,24 @@ class SqlHelperApp:
         text = outcome.message
         if outcome.details:
             text += "\n" + "\n".join(f"- {d}" for d in outcome.details)
-        self._set_feedback(text + "\nPress Next > for the next question.", GOOD)
+        where = "in the sidebar" if self.sidebar_shown() else "at the bottom"
+        self._set_feedback(text + f"\nPress Next \u203a ({where}) for the next question.", GOOD)
         self._record(q, correct=True)
-        self.next_btn.configure(default="active")   # macOS draws this as the blue default button
-        self.next_btn.configure(text="Next >  \u2713")
+        self._set_next(done=True)
+
+    def _set_next(self, done: bool) -> None:
+        """Highlight every Next button (sidebar + bottom row) after a correct answer."""
+        for btn in self.next_btns:
+            # default="active" is drawn by macOS as the blue default button.
+            btn.configure(default="active" if done else "normal",
+                          text="Next \u203a  \u2713" if done else "Next \u203a")
 
     def _record(self, q: Question, correct: bool) -> None:
         try:
             self.store.record_attempt(q.id, self.editor.get(), correct)
         except OSError as exc:
             self.status.configure(foreground=BAD, text=f"Couldn't save history: {exc}")
-        self._refresh_picker()
-        if q in self.visible:
-            self.picker.current(self.visible.index(q) + 1)
+        self._refresh_list()
 
     # ---- tables tab ----------------------------------------------------
     def _selected_table(self) -> str | None:
@@ -1194,6 +1621,7 @@ class SqlHelperApp:
         messagebox.showinfo("Keyboard shortcuts", "\n".join((
             f"{MOD_LABEL}+Enter            Run query",
             f"{MOD_LABEL}+Shift+Enter    Check answer",
+            f"{MOD_LABEL}+[  /  {MOD_LABEL}+]       Previous / next question",
             f"{MOD_LABEL}+N                  New question",
             f"{MOD_LABEL}+G                  Generate questions",
             f"{MOD_LABEL}+Z                  Undo in editor",
