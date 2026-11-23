@@ -64,6 +64,7 @@ class DatabaseTests(unittest.TestCase):
 
     def test_row_cap(self):
         db = PracticeDatabase(max_rows=5)
+        self.addCleanup(db.close)
         result = db.run("SELECT * FROM employees")
         self.assertEqual(len(result.rows), 5)
         self.assertTrue(result.truncated)
@@ -129,7 +130,9 @@ class BuiltinQuestionTests(unittest.TestCase):
 
     def test_builtin_solutions(self):
         db = PracticeDatabase()
-        questions = QuestionStore(data_dir=Path(tempfile.mkdtemp())).load_builtin()
+        self.addCleanup(db.close)
+        questions = [q for q in QuestionStore(data_dir=Path(tempfile.mkdtemp())).load_builtin()
+                     if q.mode == "sql"]
         self.assertEqual(len({q.id for q in questions}), len(questions), "duplicate ids")
         for q in questions:
             with self.subTest(question=q.id):

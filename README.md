@@ -1,14 +1,28 @@
 # SQL Helper
 
-A small desktop app for practicing entry-level SQL interview questions.
-Write a query on the left, and the results table on the right updates as you type.
+A small desktop app for practicing entry-level **SQL** and **Python** interview
+questions. Pick a mode with the **SQL | Python** switch at the top. Write code
+on the left, and the results on the right update as you type.
+
+Both modes share the same features (below), plus:
+
+- **Lesson cards:** every topic has a short illustrated lesson, e.g. how a JOIN
+  matches rows, how GROUP BY buckets them, or how slicing counts positions.
+  Open it with the **Lesson** button or tab.
+- **Python mode** has two question styles, *write a function* and *predict the
+  output*, and a **Visualise** tab that steps through your code line by line
+  (see [Python mode](#python-mode)).
+
+Shared features:
 
 - **Live preview:** results refresh about a third of a second after you stop typing.
   Half-written SQL doesn't clear the grid. The last valid result stays on screen
   and the error appears in the status bar.
-- **23 built-in questions** covering `SELECT`, `WHERE`, `ORDER BY`, `LIMIT`,
+- **Built-in questions:** 23 for SQL (`SELECT`, `WHERE`, `ORDER BY`, `LIMIT`,
   `DISTINCT`, `LIKE`, `IN`, `BETWEEN`, `NULL`, aggregates, `GROUP BY`,
-  `HAVING`, `INNER`/`LEFT`/self `JOIN`, subqueries and `CASE`.
+  `HAVING`, `INNER`/`LEFT`/self `JOIN`, subqueries and `CASE`) and 29 for
+  Python (functions, strings, slicing, lists, loops, conditionals,
+  dictionaries, sets, comprehensions, sorting, `try`/`except`).
 - **Run** a correct answer and the question is marked done. Use **Check
   Answer** to grade any attempt and get an explanation of what's wrong: column
   count, missing or extra rows, or wrong order.
@@ -18,16 +32,17 @@ Write a query on the left, and the results table on the right updates as you typ
   you can try first. It's revealed automatically once you get the answer right.
 - **Question generator:** choose a difficulty (Easy, Medium, Hard or Mixed) and
   how many questions, press **Randomise**, then save the set.
-- **Reset progress** for one question or for everything. A backup is kept.
-- **Tables** tab lets you browse every practice table and its columns.
+- **Reset progress** for one question or for everything in the current mode.
+  A backup is kept.
+- **Tables** tab (SQL) lets you browse every practice table and its columns.
 - **Your own questions:** create, edit and delete them. They're saved as JSON
   files in `user_data/questions/`.
 - **Attempt history:** every checked attempt goes to `user_data/history.jsonl`.
   Solved questions show `[done]` in the picker.
-- **Free practice mode:** run any query with no question selected.
+- **Free practice:** run any query or Python code with no question selected.
 
-It uses only the Python standard library (`tkinter`, `sqlite3`, `json`), so
-there's nothing to `pip install`.
+It uses only the Python standard library (`tkinter`, `sqlite3`, `json`,
+`subprocess`), so there's nothing to `pip install`.
 
 ## Quick start
 
@@ -115,7 +130,7 @@ python3 -m sql_helper
 | `Cmd+Enter` (⌘↵) | Run query |
 | `Cmd+Shift+Enter` (⌘⇧↵) | Check answer |
 | `Cmd+N` | New question |
-| `Cmd+G` | Generate questions |
+| `Cmd+G` | Generate questions (for the current mode) |
 | `Cmd+Z` | Undo in the editor |
 
 ### How answers are graded
@@ -152,17 +167,19 @@ Your questions are never deleted by a reset. The history file is copied to
 
 ### Generating questions
 
-Press **Generate…** (or `Cmd+G`):
+Press **Generate…** (or `Cmd+G`). It generates questions for the mode you're
+in:
 
 1. Pick **Easy**, **Medium**, **Hard** or **Mixed**.
 2. Pick how many questions, from 1 to 20.
 3. Press **Randomise** to get a new set. Click a row to read the full question.
 4. Press **Save N Questions**. They appear in the list marked `(generated)`.
 
-Generated questions are built from templates using values that really exist in
-the practice data (real salaries, categories, statuses and names). Every
-solution is run before it's offered, and kept only if it works and returns
-rows. Duplicates of questions you already have are skipped. Roughly, the levels
+SQL questions are built from templates using values that really exist in the
+practice data (real salaries, categories, statuses and names). Python
+questions pick random numbers, words and letters, and mix both question
+styles. Every solution is run before it's offered and kept only if it works.
+Duplicates of questions you already have are skipped. Roughly, the SQL levels
 cover:
 
 | Level | Topics |
@@ -170,6 +187,13 @@ cover:
 | Easy | choosing columns, `WHERE` with numbers and text, `IS NULL`, `ORDER BY` + `LIMIT`, `COUNT`, `DISTINCT`, `LIKE` |
 | Medium | `GROUP BY` with `COUNT`/`AVG`/`MIN`/`MAX`/`SUM`, `HAVING`, `JOIN`, `LEFT JOIN` with zero counts, `IN`, `BETWEEN`, `CASE` |
 | Hard | subqueries against the average, top row per group, three-table `JOIN` + `HAVING`, `NOT IN`, self joins, Nth-highest value, revenue by category |
+
+Python levels cover: Easy, small functions (multiply, add a suffix, slicing,
+comparisons, list indexing) and predicting `//`, `%` and slicing; Medium,
+loops with counters, comprehensions, `range`, string methods, FizzBuzz
+variants, dictionary lookups and list methods; Hard, running totals, longest
+word, inverting a dict, splitting into chunks, digit sums with `while`, and
+`split`/`join`.
 
 The number of different questions per level is limited, because the data set is
 small. If you ask for more than are left, the dialog says how many it found.
@@ -185,6 +209,100 @@ can check its output. The question can only be saved once the solution runs.
 **Questions → New Question from Current Query…** starts the dialog with
 whatever is in the editor. Built-in questions are read-only, so this is how you
 make a variation of one.
+
+## Python mode
+
+Switch to **Python** at the top left. Each mode keeps its own questions and
+`Solved X / Y` count.
+
+### Two question styles
+
+- **Write a function**, e.g. *"Write `reverse_string(s)`..."*. The editor
+  starts with the function's outline. Your function is called with several
+  hidden test inputs and compared with the reference answer.
+- **Predict the output**: the question shows a short program and you type
+  exactly what it prints.
+
+### While you type
+
+The **Test Results** tab shows what your function returns for each test
+input, and **Output** shows anything you `print` and any errors (with a
+plain-English hint). Pass/fail isn't shown live, so it doesn't give the answer
+away. Press **Run** to complete the question once it's right, or **Check
+Answer** to see which tests pass (✓ / ✗).
+
+The editor indents for you: pressing Return after a line ending in `:` indents
+the next line, and Tab inserts 4 spaces.
+
+### Visualise: step through your code
+
+The **Visualise** tab runs your code and records every step:
+
+- the line about to run is highlighted, with a sentence explaining what's
+  happening ("Calling `double(n=4)`", "`double` returns 8");
+- every variable is drawn, with lists and strings as numbered boxes and
+  dictionaries as key → value pairs; values that just changed are
+  highlighted;
+- **< Step / Step >** or the slider move through the run, and "Printed so far"
+  shows the output up to that point.
+
+For function questions, pick which test call to trace. For *predict the
+output* questions, Visualise unlocks once you've answered correctly or pressed
+**Show Expected Result**, since stepping through would show the answer.
+
+### How Python answers are graded
+
+- Return values are compared, so `return` the answer rather than `print` it.
+  The feedback points this out if your function returns `None`.
+- Sets and dictionaries are compared ignoring order, and floats are compared
+  to 9 decimal places.
+- *Predict the output* answers ignore trailing spaces and blank lines at the
+  end.
+
+### Is running Python safe?
+
+SQL mode can lock the practice data so nothing changes. Python can't be fully
+locked down without installing extra tools, so here's exactly what the app
+does:
+
+- Your code runs in a **separate Python process**, so it can't crash or freeze
+  the app.
+- It's **stopped after 3 seconds** (1.5 seconds for the live preview), so
+  infinite loops are harmless.
+- It runs in isolated mode (`python -I`) inside a **new, empty temporary
+  folder**, with its CPU time capped and its printed output size-limited.
+
+What it doesn't do is stop code that *deliberately* reads or deletes files
+elsewhere on your computer. That's the same as running code in any Python
+editor. Only run code you've written or understand.
+
+### Writing your own Python questions
+
+**+ New** in Python mode opens the Python question dialog. Choose the style,
+then:
+
+- **Write a function:** give the function name, a reference solution, and
+  test inputs, one call per line, written as you'd put them inside the
+  brackets (e.g. `'hello', 3` or `[1, 2, 3]`). The expected answers come from
+  running your solution. The editor starter is made from your function's
+  signature.
+- **Predict the output:** give the code. Its printed output is the answer.
+
+**Test Solution** runs it. A question only saves once it runs cleanly.
+
+## Lessons
+
+The **Lesson** tab (and the **Lesson** button on the question card) shows the
+lesson for the current question's topic. You can also browse every lesson in
+the mode from its drop-down. Each lesson has a short explanation, an example,
+and a diagram:
+
+| Mode | Lessons |
+|---|---|
+| SQL | SELECT, WHERE, ORDER BY, LIMIT/OFFSET, DISTINCT, NULL, LIKE, IN/BETWEEN, aggregates, GROUP BY, HAVING, INNER JOIN, LEFT JOIN, self JOIN, subqueries, correlated subqueries, CASE |
+| Python | variables, strings and indexes, slicing, string methods, lists, for loops, while loops, range, if/elif/else, functions, dictionaries, sets, comprehensions, sorting, try/except |
+
+Diagrams follow your Mac's light or dark mode.
 
 ## The practice data
 
@@ -249,6 +367,28 @@ A question file looks like this:
 }
 ```
 
+A Python question file has `"mode": "python"` plus a few extra fields:
+
+```json
+{
+  "id": "custom-triple-it-1a2b3c",
+  "mode": "python",
+  "kind": "function",
+  "title": "Triple it",
+  "prompt": "Write triple(n) that returns n multiplied by 3.",
+  "function_name": "triple",
+  "starter": "def triple(n):\n    pass\n",
+  "solution": "def triple(n):\n    return n * 3\n",
+  "tests": [[2], [-1], [0]],
+  "difficulty": "Easy",
+  "topic": "Functions",
+  "hint": ""
+}
+```
+
+For *predict the output* questions, `kind` is `"output"` and `solution` holds
+the code whose printed output is the answer.
+
 ## Project layout
 
 ```
@@ -262,13 +402,20 @@ SQL Helper/
 │   ├── __main__.py              entry point (python3 -m sql_helper)
 │   ├── app.py                   Tkinter UI (the only module that imports tkinter)
 │   ├── database.py              practice schema, seed data, safe read-only execution
-│   ├── generator.py             random question templates + validation
+│   ├── generator.py             random SQL question templates + validation
+│   ├── lessons.py               lesson cards (text, examples, diagram data) for both modes
+│   ├── lesson_view.py           draws lesson diagrams and visualiser values (Tk canvas)
+│   ├── python_runner.py         runs Python in a separate, time-limited process (+ tracing)
+│   ├── python_grader.py         grades Python answers, plain-English error hints
+│   ├── python_generator.py      random Python question templates + validation
+│   ├── python_view.py           Python mode tabs, Visualise tab, Python question dialog
 │   ├── grader.py                compares results and writes feedback
 │   ├── questions.py             Question model, custom-question files, history
-│   └── data/builtin_questions.json
+│   └── data/                    built-in questions (builtin_questions.json = SQL,
+│                                builtin_python_questions.json = Python)
 ├── sql_helper/assets/            app icon (icon.png for the window/Dock, icon.icns for the .app)
 ├── tools/make_icon.py           redraws the icon (developer-only, needs Pillow)
-├── tests/test_core.py           unit tests for everything except the UI
+├── tests/                       unit tests for everything except the UI
 ├── SQL Helper.app               built by make_mac_app.sh (not committed)
 └── user_data/                   created on first use (your questions, history, launch.log)
 ```
@@ -279,10 +426,11 @@ SQL Helper/
 python3 -m unittest discover -s tests
 ```
 
-The tests cover the database safety rules, the grader (including the hidden
-expected-result mode), custom-question storage, history and resets, and the
-generator. They also run every built-in solution and every generator template
-against the practice data.
+The tests cover the database safety rules, both graders (including the hidden
+expected-result mode), the Python runner (timeouts, errors, tracing),
+custom-question storage, history and resets, both generators, and the lessons.
+They also run every built-in solution and every generator template, and check
+that every topic maps to a lesson.
 
 ## License
 

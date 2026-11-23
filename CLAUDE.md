@@ -1,4 +1,4 @@
-# CLAUDE.md: SQL Helper
+# CLAUDE.md: SQL Helper (SQL + Python practice)
 
 Read this before changing anything in this project. `README.md` covers features
 and usage. This file covers **why** the project is built the way it is and the
@@ -6,8 +6,8 @@ rules for extending it.
 
 ## What this project is for
 
-A lightweight desktop app that helps people prepare for **entry-level SQL
-interviews**. The owner's original requirements:
+A lightweight desktop app that helps people prepare for **entry-level SQL and
+Python interviews**. The owner's original requirements:
 
 1. **Visual and interactive.** Users write SQL on one side and see the result on
    the other side *while they build the statement* (live preview).
@@ -17,19 +17,40 @@ interviews**. The owner's original requirements:
 4. **Lightweight and runs on a Mac.**
 5. **Documented.** Keep `README.md` and this file accurate.
 
+Added later (v1.2), also the owner's requirements:
+
+6. **Python mode** in the same app, switched with **SQL | Python** at the top.
+   It tests basic Python skills with **both** question styles: *write a
+   function* (graded against hidden test inputs) and *predict the output*.
+7. **Full parity** with SQL mode: built-in questions, generator, custom
+   questions, history, reset (scoped to the current mode), hidden expected
+   result, Run-completes / Next highlight.
+8. **Live preview in Python shows the learner's own outputs, not pass/fail.**
+   ✓/✗ only appear after Check Answer, and Run completes the question when
+   everything passes.
+9. **Visual learning:** a step-through **Visualise** tab for Python, and an
+   illustrated **lesson card** for every topic in **both** modes.
+
 The audience is beginners, so every change should make the app clearer, not
 more powerful. If a feature mainly helps advanced users, ask the owner first.
 
 ## Hard constraints
 
-- **Standard library only at runtime:** `tkinter`, `sqlite3`, `json`, `pathlib`
-  and so on. The one exception is the developer-only `tools/make_icon.py`,
+- **Standard library only at runtime:** `tkinter`, `sqlite3`, `json`, `pathlib`,
+  `subprocess`, `threading` and so on. The one exception is the developer-only `tools/make_icon.py`,
   which needs Pillow. Its outputs are committed, so users never run it.
   Don't add third-party dependencies (pip packages, web frameworks, Electron,
   etc.) without the owner's explicit approval. "Lightweight on a Mac" means it
   starts with `python3 -m sql_helper` and nothing else.
 - **Python 3.10+.** The code uses `X | None` type hints and other 3.10 syntax.
   It was developed on Python 3.14 with Tk 8.6 on macOS.
+- **Python runs out of process.** `python_runner` runs learner code with
+  `sys.executable -I` in a fresh temp folder, with a wall-clock timeout, a CPU
+  rlimit set by the child (not `preexec_fn`, which isn't thread-safe), and
+  size-capped output. The result comes back as one marked JSON line on the
+  real stdout, while learner prints are captured separately. This is **not**
+  a security sandbox, and README says so honestly. Never claim it is one, and
+  never run learner code in the app's own process.
 - **The practice database is read-only and in-memory.** `PracticeDatabase` uses
   an SQLite authorizer that only allows read actions, plus a progress-handler
   timeout. Never weaken this. User SQL must never be able to change the seed
@@ -45,13 +66,23 @@ more powerful. If a feature mainly helps advanced users, ask the owner first.
 |---|---|---|
 | `database.py` | Schema, seed data, `PracticeDatabase.run()` → `QueryResult` | No |
 | `grader.py` | `grade(user, expected, order_matters, show_examples)` → `GradeResult` | No |
-| `generator.py` | Random question templates → validated `Question`s | No |
+| `generator.py` | Random SQL question templates → validated `Question`s | No |
 | `questions.py` | `Question` dataclass, `QuestionStore` (JSON files + history) | No |
-| `app.py` | All widgets and event wiring | Yes, the only one |
+| `python_runner.py` | Run Python in a subprocess; results, errors, trace steps | No |
+| `python_grader.py` | Grade function / output answers; error hints | No |
+| `python_generator.py` | Random Python question templates → validated `Question`s | No |
+| `lessons.py` | Lesson cards as data (text, example, diagram spec) | No |
+| `app.py` | Main window, SQL tabs, mode switch, shared dialogs | Yes |
+| `python_view.py` | Python tabs, Visualise tab, Python question dialog, worker thread | Yes |
+| `lesson_view.py` | Draws lesson diagrams and visualiser values on a canvas | Yes |
 
 - **Keep the UI thin.** Logic that could be tested without a window belongs in
-  the non-UI modules and gets a unit test. `app.py` should only translate
-  between widgets and those modules.
+  the non-UI modules and gets a unit test. The three UI modules should only
+  translate between widgets and those modules.
+- **Python runs on a worker thread** (`python_view.Worker`) so the window never
+  freezes. Results come back through a queue polled with `after()`. Only the
+  newest result per channel ("run", "expected", "visualise") is applied.
+  Never touch Tk widgets from the worker thread.
 - **Errors are values.** `PracticeDatabase.run()` never raises for bad SQL. It
   returns `QueryResult(error=...)` with a beginner-friendly message (see
   `friendly_error`). Follow that pattern rather than letting exceptions reach
@@ -65,7 +96,12 @@ more powerful. If a feature mainly helps advanced users, ask the owner first.
 
 - Custom question: `user_data/questions/<id>.json` with the fields `id, title,
   prompt, solution, difficulty, topic, hint, order_matters, generated`
-  (`generated` was added in v1.1 and defaults to false). `source` is *not*
+  (`generated` was added in v1.1 and defaults to false), plus the v1.2 fields
+  `mode` ("sql" default / "python"), `kind` ("function" / "output", Python
+  only), `function_name`, `starter`, `tests` (list of argument lists) and
+  `lesson` (optional lesson id). Files without the new fields load as SQL
+  questions. For "output" questions, `solution` is the code whose printed
+  output is the answer. `source` is *not*
   stored. It's derived from where the question was loaded from.
 - History: `user_data/history.jsonl`, one object per line:
   `timestamp, question_id, sql, correct`.
@@ -96,6 +132,34 @@ Built-in questions are in `sql_helper/data/builtin_questions.json`.
 - If you change the seed data in `database.py`, re-run the tests and re-read
   the prompts. Answers that the prompts or tests describe (for example "2
   customers have no orders") may change.
+
+## Python question rules
+
+- Built-in Python questions are in `sql_helper/data/builtin_python_questions.json`
+  (JSON: use `true`/`false`/`null`, not Python's `True`/`False`/`None`).
+- *Function* prompts must name the function and say to **return** (not print).
+  The starter must not pass the tests (`PythonBuiltinTests` checks this).
+- Test arguments must be JSON-friendly (numbers, strings, bools, lists,
+  dicts). They're passed to the child process as JSON.
+- Grading compares `canon(value)` (sets/dicts order-insensitive, floats to 9
+  places). Tuples and lists are different types: prompts should say which to
+  return.
+- *Output* questions: the Visualise tab stays locked until solved or revealed,
+  because stepping through would show the answer.
+
+## Lesson rules
+
+- Lessons live in `lessons.py` as data. Diagrams use one of the drawing types
+  in `lesson_view.Painter.draw` (panels, sequence, kv, flow, venn, refs). Add
+  a new drawing type there, not ad-hoc canvas code elsewhere.
+- Every question topic must map to a lesson by keyword (`lesson_for`).
+  `LessonTests.test_every_topic_maps_to_a_real_lesson` fails if a built-in or
+  generator topic falls back to the default lesson. Add a keyword or a lesson.
+- Lesson text must be accurate. Check any claim about SQLite or Python
+  behaviour before writing it (e.g. SQLite's LIKE is case-insensitive for
+  ASCII only).
+- Diagram colours come from `lesson_view.palette()`, which follows light/dark
+  mode. Don't hard-code colours in drawing code.
 
 ## Run vs Check Answer (owner's requirement)
 
@@ -205,6 +269,13 @@ python3 -m unittest discover -s tests   # run tests
 - When something needs checking on the owner's screen (the Dock, a permission
   prompt), ask them to look or send a screenshot. Hidden macOS prompts can make
   shell commands hang.
+
+## Verifying UI changes
+
+`screencapture` needs the Screen Recording permission for Claude. macOS can
+revoke it after an OS update (a black screenshot or "could not create image"
+means it's off). If so, drive the UI with a script (no screenshots) and ask the
+owner to re-enable the permission or send a screenshot. Don't work around it.
 
 ## Ideas the owner may want later (not built yet; confirm before starting)
 

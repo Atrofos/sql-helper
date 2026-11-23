@@ -15,18 +15,21 @@ import re
 import shutil
 import tempfile
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = PACKAGE_DIR.parent
 BUILTIN_QUESTIONS_FILE = PACKAGE_DIR / "data" / "builtin_questions.json"
+BUILTIN_PYTHON_FILE = PACKAGE_DIR / "data" / "builtin_python_questions.json"
 DEFAULT_DATA_DIR = PROJECT_DIR / "user_data"
 DATA_DIR_ENV = "SQL_HELPER_DATA_DIR"
 
 DIFFICULTIES = ("Easy", "Medium", "Hard")
 SOURCE_BUILTIN = "builtin"
+MODE_SQL, MODE_PYTHON = "sql", "python"
+KIND_FUNCTION, KIND_OUTPUT = "function", "output"   # the two Python question styles
 SOURCE_CUSTOM = "custom"
 
 
@@ -41,6 +44,14 @@ class Question:
     hint: str = ""
     order_matters: bool = False
     generated: bool = False          # made by the question generator (added in v1.1)
+    # --- added in v1.2 for Python mode (all default to SQL behaviour) ---
+    mode: str = MODE_SQL             # "sql" or "python"
+    kind: str = ""                   # Python only: "function" (write a function) or
+                                     # "output" (predict what `solution` prints)
+    function_name: str = ""          # Python "function" questions: the function to write
+    starter: str = ""                # code put in the editor when the question opens
+    tests: list = field(default_factory=list)   # Python "function": list of argument lists
+    lesson: str = ""                 # optional lesson id; otherwise picked from the topic
     source: str = SOURCE_CUSTOM
 
     @property
@@ -53,6 +64,11 @@ class Question:
         missing = [k for k in ("id", "title", "prompt", "solution") if not data.get(k)]
         if missing:
             raise ValueError(f"missing required field(s): {', '.join(missing)}")
+        if data.get("mode") == MODE_PYTHON:
+            if data.get("kind") not in (KIND_FUNCTION, KIND_OUTPUT):
+                raise ValueError("Python questions need kind 'function' or 'output'")
+            if data["kind"] == KIND_FUNCTION and not (data.get("function_name") and data.get("tests")):
+                raise ValueError("Python function questions need function_name and tests")
         known = {k: data[k] for k in cls.__dataclass_fields__ if k in data and k != "source"}
         return cls(**known, source=source)
 
@@ -94,8 +110,11 @@ class QuestionStore:
 
     # ---- questions -----------------------------------------------------
     def load_builtin(self) -> list[Question]:
-        with open(BUILTIN_QUESTIONS_FILE, encoding="utf-8") as fh:
-            return [Question.from_dict(d, SOURCE_BUILTIN) for d in json.load(fh)]
+        questions = []
+        for path in (BUILTIN_QUESTIONS_FILE, BUILTIN_PYTHON_FILE):
+            with open(path, encoding="utf-8") as fh:
+                questions += [Question.from_dict(d, SOURCE_BUILTIN) for d in json.load(fh)]
+        return questions
 
     def load_custom(self) -> list[Question]:
         questions = []
@@ -160,8 +179,11 @@ class QuestionStore:
                     continue  # tolerate a damaged line rather than losing all history
         return entries
 
-    def reset_history(self, question_id: str | None = None) -> Path | None:
-        """Clear saved attempts for one question, or for all questions when None.
+    def reset_history(self, question_id: str | None = None,
+                      question_ids: set[str] | None = None) -> Path | None:
+        """Clear saved attempts for one question, a set of questions, or everything.
+
+        With neither argument, all history is cleared.
 
         The current history file is copied to ``history_backups/`` first, so a
         reset can always be undone by hand. Returns the backup path, or None if
@@ -174,15 +196,16 @@ class QuestionStore:
         backup = self.backup_dir / f"history-{stamp}.jsonl"
         shutil.copy2(self.history_file, backup)
 
-        if question_id is None:
+        if question_id is None and question_ids is None:
             self.history_file.unlink()
             return backup
+        targets = set(question_ids or ()) | ({question_id} if question_id else set())
 
         kept = []
         with open(self.history_file, encoding="utf-8") as fh:
             for line in fh:
                 try:
-                    if json.loads(line).get("question_id") == question_id:
+                    if json.loads(line).get("question_id") in targets:
                         continue
                 except (json.JSONDecodeError, AttributeError):
                     pass  # keep lines we can't read rather than silently dropping them

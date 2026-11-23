@@ -1,9 +1,10 @@
-"""Tkinter user interface for SQL Helper.
+"""Tkinter user interface for SQL Helper (SQL and Python practice).
 
-Layout: the left side holds the question and the SQL editor; the right side
-shows results as tables (your live result, the expected result, and a browser
-for the practice tables). All SQL and file logic lives in the other modules;
-this file only wires widgets to them.
+Layout: the left side holds the question and the code editor; the right side
+shows results. A SQL | Python switch at the top changes mode. SQL mode's
+right side is built here (your result, expected result, tables, lesson);
+Python mode's right side lives in python_view.py. All SQL, Python-running and
+file logic lives in the non-UI modules; this file only wires widgets to them.
 """
 
 from __future__ import annotations
@@ -20,7 +21,12 @@ from typing import Callable
 from .database import PracticeDatabase, QueryResult
 from .generator import GENERATOR_DIFFICULTIES, MAX_COUNT, generate_questions
 from .grader import grade
-from .questions import DIFFICULTIES, Question, QuestionStore
+from .lesson_view import LessonView
+from .lessons import lesson_for, lessons_for_mode
+from .python_generator import generate_python_questions
+from .python_view import PythonPanel, PythonQuestionDialog
+from .questions import (DIFFICULTIES, KIND_FUNCTION, KIND_OUTPUT, MODE_PYTHON, MODE_SQL,
+                        Question, QuestionStore)
 
 IS_MAC = sys.platform == "darwin"
 MOD = "Command" if IS_MAC else "Control"      # Tk event modifier name
@@ -30,6 +36,7 @@ CHECK_KEYS = "\u2318\u21e7\u21b5" if IS_MAC else "Ctrl+Shift+Enter"  # ⌘⇧↵
 LIVE_DELAY_MS = 350                           # pause after typing before live preview runs
 MAX_DISPLAY_ROWS = 500                        # rows drawn in a grid (Treeview gets slow beyond this)
 FREE_PRACTICE = "Free practice (no question)"
+PY_INDENT = "    "
 PANE_WIDTH, PANE_HEIGHT = 600, 560            # starting size of each half; both stretch equally
 
 GOOD = "#1a7f37"
@@ -41,9 +48,19 @@ SQL_KEYWORDS = (
     "INTERSECT EXCEPT CASE WHEN THEN ELSE END WITH RECURSIVE EXISTS COUNT SUM AVG MIN "
     "MAX ROUND COALESCE IFNULL CAST LOWER UPPER LENGTH SUBSTR TRIM"
 ).split()
-KEYWORD_RE = re.compile(r"\b(?:" + "|".join(SQL_KEYWORDS) + r")\b", re.IGNORECASE)
-STRING_RE = re.compile(r"'(?:[^']|'')*'?")
-COMMENT_RE = re.compile(r"--[^\n]*")
+PY_KEYWORDS = (
+    "def return if elif else for while in not and or is None True False import from as class "
+    "try except finally raise with lambda pass break continue global yield print len range "
+    "list dict set tuple str int float sorted sum min max enumerate zip"
+).split()
+# (keyword, string, comment) patterns per editor language.
+SYNTAX = {
+    MODE_SQL: (re.compile(r"\b(?:" + "|".join(SQL_KEYWORDS) + r")\b", re.IGNORECASE),
+               re.compile(r"'(?:[^']|'')*'?"), re.compile(r"--[^\n]*")),
+    MODE_PYTHON: (re.compile(r"\b(?:" + "|".join(PY_KEYWORDS) + r")\b"),
+                  re.compile(r"(?:\"\"\"[\s\S]*?(?:\"\"\"|$)|'[^'\n]*'?|\"[^\"\n]*\"?)"),
+                  re.compile(r"#[^\n]*")),
+}
 
 
 def mono_font() -> tuple[str, int]:
@@ -139,7 +156,33 @@ class SqlEditor(ttk.Frame):
         self.text.tag_configure("str", foreground="#c0600a")
         self.text.tag_configure("cmt", foreground="#888888")
         self._on_change = on_change
+        self.language: str | None = MODE_SQL     # None = plain text (no highlighting)
         self.text.bind("<<Modified>>", self._modified)
+        self.text.bind("<Tab>", self._tab)
+        self.text.bind("<Return>", self._newline)
+
+    def set_language(self, language: str | None) -> None:
+        self.language = language
+        self.highlight()
+
+    def _tab(self, _event=None):
+        """Python wants spaces, not tab characters."""
+        if self.language == MODE_PYTHON:
+            self.text.insert("insert", PY_INDENT)
+            return "break"
+        return None
+
+    def _newline(self, _event=None):
+        """Keep the indentation of the previous line, and indent after a ':' (Python)."""
+        if self.language != MODE_PYTHON:
+            return None
+        line = self.text.get("insert linestart", "insert")
+        indent = line[: len(line) - len(line.lstrip(" "))]
+        if line.rstrip().endswith(":"):
+            indent += PY_INDENT
+        self.text.insert("insert", "\n" + indent)
+        self.text.see("insert")
+        return "break"
 
     def _modified(self, _event=None) -> None:
         if self.text.edit_modified():
@@ -163,7 +206,9 @@ class SqlEditor(ttk.Frame):
         content = self.get()
         for tag in ("kw", "str", "cmt"):
             self.text.tag_remove(tag, "1.0", "end")
-        for tag, pattern in (("kw", KEYWORD_RE), ("str", STRING_RE), ("cmt", COMMENT_RE)):
+        if self.language not in SYNTAX:
+            return
+        for tag, pattern in zip(("kw", "str", "cmt"), SYNTAX[self.language]):
             for m in pattern.finditer(content):
                 self.text.tag_add(tag, f"1.0+{m.start()}c", f"1.0+{m.end()}c")
 
@@ -304,10 +349,10 @@ class HistoryWindow(tk.Toplevel):
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Double-click an attempt to load it into the editor.").pack(anchor="w")
 
-        cols = ("when", "question", "result", "sql")
+        cols = ("when", "question", "result", "sql")  # "sql" holds the code for both modes
         self.tree = ttk.Treeview(frame, columns=cols, show="headings")
         for cid, text, width in (("when", "When", 150), ("question", "Question", 220),
-                                 ("result", "Result", 80), ("sql", "Query", 360)):
+                                 ("result", "Result", 80), ("sql", "Your answer", 360)):
             self.tree.heading(cid, text=text, anchor="w")
             self.tree.column(cid, width=width, anchor="w", stretch=cid == "sql")
         scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
@@ -315,7 +360,7 @@ class HistoryWindow(tk.Toplevel):
         self.tree.pack(side="left", fill="both", expand=True, pady=(8, 0))
         scroll.pack(side="right", fill="y", pady=(8, 0))
 
-        titles = {q.id: q.title for q in app.questions}
+        titles = {q.id: f"[{'Py' if q.mode == MODE_PYTHON else 'SQL'}] {q.title}" for q in app.questions}
         self.entries = list(reversed(app.store.load_history()))
         for i, e in enumerate(self.entries):
             sql = " ".join(str(e.get("sql", "")).split())
@@ -360,16 +405,21 @@ class ResetDialog(tk.Toplevel):
         this_btn.pack(side="left", padx=4)
         if app.current is None:
             this_btn.configure(state="disabled")
-        ttk.Button(buttons, text="Reset All Progress...",
+        mode_name = "Python" if app.mode == MODE_PYTHON else "SQL"
+        ttk.Button(buttons, text=f"Reset All {mode_name} Progress...",
                    command=lambda: self._reset(None)).pack(side="left", padx=4)
         self.bind("<Escape>", lambda _e: self.destroy())
 
     def _reset(self, question_id: str | None) -> None:
+        mode_name = "Python" if self.app.mode == MODE_PYTHON else "SQL"
         if question_id is None and not messagebox.askyesno(
-                "Reset all progress?", "Clear progress for every question?", parent=self):
+                "Reset all progress?", f"Clear progress for every {mode_name} question?", parent=self):
             return
         try:
-            backup = self.app.store.reset_history(question_id)
+            if question_id is None:
+                backup = self.app.store.reset_history(question_ids={q.id for q in self.app.visible})
+            else:
+                backup = self.app.store.reset_history(question_id)
         except OSError as exc:
             messagebox.showerror("Could not reset", str(exc), parent=self)
             return
@@ -384,7 +434,7 @@ class GenerateDialog(tk.Toplevel):
         super().__init__(app.root)
         self.app = app
         self.preview: list[Question] = []
-        self.title("Generate Questions")
+        self.title("Generate Python Questions" if app.mode == MODE_PYTHON else "Generate SQL Questions")
         self.transient(app.root)
         self.geometry("720x520")
         self.minsize(600, 420)
@@ -444,8 +494,12 @@ class GenerateDialog(tk.Toplevel):
             self.status.configure(foreground=BAD, text=f"Number must be between 1 and {MAX_COUNT}.")
             return
         existing = {q.solution for q in self.app.questions}
-        self.preview = generate_questions(self.app.db, self.diff_var.get(), count,
-                                          self.app.store.new_id, existing)
+        if self.app.mode == MODE_PYTHON:
+            self.preview = generate_python_questions(self.diff_var.get(), count,
+                                                     self.app.store.new_id, existing)
+        else:
+            self.preview = generate_questions(self.app.db, self.diff_var.get(), count,
+                                              self.app.store.new_id, existing)
         self.tree.delete(*self.tree.get_children())
         for i, q in enumerate(self.preview):
             self.tree.insert("", "end", iid=str(i), values=(q.difficulty, q.topic, q.title))
@@ -458,7 +512,7 @@ class GenerateDialog(tk.Toplevel):
                 "list. Try Mixed, or a smaller number."))
         else:
             self.status.configure(foreground="", text=(
-                "Each question was checked against the practice data and has a working answer."))
+                "Each question's solution was run and checked, so every one has a working answer."))
         if n:
             self.tree.selection_set("0")
         else:
@@ -469,7 +523,8 @@ class GenerateDialog(tk.Toplevel):
         if sel:
             q = self.preview[int(sel[0])]
             order = "  (row order matters)" if q.order_matters else ""
-            self.detail.configure(text=f"{q.prompt}{order}")
+            code = f"\n\n{q.solution.strip()}" if q.kind == KIND_OUTPUT else ""
+            self.detail.configure(text=f"{q.prompt}{order}{code}")
 
     def _save(self) -> None:
         saved = 0
@@ -498,18 +553,21 @@ class SqlHelperApp:
         self.root = root
         self.store = store
         self.db = db
-        self.questions: list[Question] = []
+        self.questions: list[Question] = []        # every question, both modes
+        self.visible: list[Question] = []          # just the current mode's questions
+        self.mode = MODE_SQL
         self.current: Question | None = None
         self.drafts: dict[str | None, str] = {}   # unsaved editor text per question (memory only)
         self._live_job: str | None = None
         self.expected_revealed = False             # expected output stays hidden until asked for
         self._feedback_is_error = False            # lets a successful run clear an old error
 
-        root.title("SQL Helper: Interview Practice")
+        root.title("SQL Helper: SQL & Python Interview Practice")
         root.geometry("1280x780")
         root.minsize(1120, 640)
 
         self.live_var = tk.BooleanVar(value=True)
+        self.mode_var = tk.StringVar(value=MODE_SQL)
         self._build_menu()
         self._build_layout()
         self._bind_keys()
@@ -551,14 +609,18 @@ class SqlHelperApp:
         top.pack(fill="x", pady=(0, 8))
         self.progress = ttk.Label(top)
         self.progress.pack(side="right")   # packed first so it keeps its space when narrow
+        for value, label in ((MODE_SQL, "SQL"), (MODE_PYTHON, "Python")):
+            ttk.Radiobutton(top, text=label, value=value, variable=self.mode_var,
+                            command=self._mode_changed).pack(side="left", padx=(0, 6))
+        ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=(2, 10))
         ttk.Label(top, text="Question:").pack(side="left")
-        self.picker = ttk.Combobox(top, state="readonly", width=34)
+        self.picker = ttk.Combobox(top, state="readonly", width=30)
         self.picker.pack(side="left", padx=6)
         self.picker.bind("<<ComboboxSelected>>", lambda _e: self._picked())
         ttk.Button(top, text="< Prev", command=lambda: self._step(-1)).pack(side="left")
         self.next_btn = ttk.Button(top, text="Next >", width=9, command=lambda: self._step(1))
         self.next_btn.pack(side="left", padx=4)
-        ttk.Button(top, text="+ New Question", command=self.new_question).pack(side="left", padx=4)
+        ttk.Button(top, text="+ New", command=self.new_question).pack(side="left", padx=4)
         ttk.Button(top, text="Generate...",
                    command=lambda: GenerateDialog(self)).pack(side="left")
         ttk.Button(top, text="Reset...", command=lambda: ResetDialog(self)).pack(side="left", padx=4)
@@ -585,8 +647,12 @@ class SqlHelperApp:
         self.q_prompt = ttk.Label(card, wraplength=480, justify="left")
         self.q_prompt.pack(anchor="w", fill="x")
         card.bind("<Configure>", lambda e: self.q_prompt.configure(wraplength=max(e.width - 30, 200)))
+        # Code shown with the question ("predict the output" questions only).
+        self.q_code = tk.Text(card, height=5, font=mono_font(), wrap="none", borderwidth=1,
+                              relief="solid", padx=8, pady=6, state="disabled")
         q_buttons = ttk.Frame(card)
         q_buttons.pack(anchor="w", pady=(8, 0))
+        self.q_buttons = q_buttons
         self.hint_btn = ttk.Button(q_buttons, text="Show Hint", command=self.show_hint)
         self.hint_btn.pack(side="left")
         self.solution_btn = ttk.Button(q_buttons, text="Reveal Solution", command=self.reveal_solution)
@@ -594,8 +660,10 @@ class SqlHelperApp:
         self.card_expected_btn = ttk.Button(q_buttons, text="Show Expected Result",
                                             command=lambda: self.toggle_expected(select_tab=True))
         self.card_expected_btn.pack(side="left")
+        ttk.Button(q_buttons, text="Lesson", command=self.show_lesson).pack(side="left", padx=6)
 
-        ttk.Label(left, text="Your SQL").pack(anchor="w", pady=(10, 2))
+        self.editor_label = ttk.Label(left, text="Your SQL")
+        self.editor_label.pack(anchor="w", pady=(10, 2))
         self.editor = SqlEditor(left, on_change=self._schedule_live_run)
         self.editor.pack(fill="both", expand=True)
 
@@ -619,6 +687,7 @@ class SqlHelperApp:
         panes.add(right, weight=1)
         self.tabs = ttk.Notebook(right)
         self.tabs.pack(fill="both", expand=True)
+        self.py = PythonPanel(right, self)   # shown instead of self.tabs in Python mode
 
         self.user_grid = ResultGrid(self.tabs, "Start typing a query to see results here.")
         expected_tab = ttk.Frame(self.tabs)
@@ -633,6 +702,10 @@ class SqlHelperApp:
         self.tabs.add(expected_tab, text="Expected Result")
         self.expected_tab = expected_tab
         self.tabs.add(self._build_tables_tab(self.tabs), text="Tables")
+        self.sql_lesson = LessonView(self.tabs)
+        self.sql_lesson.set_lessons(lessons_for_mode(MODE_SQL))
+        self.tabs.add(self.sql_lesson, text="Lesson")
+        self.py.lesson_view.set_lessons(lessons_for_mode(MODE_PYTHON))
 
         self.status = ttk.Label(outer, anchor="w")
         self.status.pack(fill="x", pady=(8, 0))
@@ -681,27 +754,63 @@ class SqlHelperApp:
             self.questions = []
         if self.store.warnings:
             messagebox.showwarning("Some questions were skipped", "\n".join(self.store.warnings))
+        target = next((q for q in self.questions if q.id == select_id), None)
+        if target is not None and target.mode != self.mode:
+            self._switch_mode(target.mode)
+        self._filter()
         self._refresh_picker()
         keep = select_id or (self.current.id if self.current else None)
-        index = next((i for i, q in enumerate(self.questions) if q.id == keep), 0)
+        index = next((i for i, q in enumerate(self.visible) if q.id == keep),
+                     0 if self.visible else None)
         self._select(index)
+
+    # ---- modes -----------------------------------------------------------
+    def _filter(self) -> None:
+        self.visible = [q for q in self.questions if q.mode == self.mode]
+
+    def _draft_key(self, q: Question | None) -> str:
+        return q.id if q else f"free:{self.mode}"
+
+    def _mode_changed(self) -> None:
+        if self.mode_var.get() != self.mode:
+            self._switch_mode(self.mode_var.get())
+            self._filter()
+            self._refresh_picker()
+            self._select(0 if self.visible else None, save_draft=False)
+
+    def _switch_mode(self, mode: str) -> None:
+        """Swap the right-hand panel and editor language; keeps the current draft."""
+        self.drafts[self._draft_key(self.current)] = self.editor.get()
+        self.mode = mode
+        self.mode_var.set(mode)
+        self.current = None
+        if mode == MODE_PYTHON:
+            self.tabs.pack_forget()
+            self.py.pack(fill="both", expand=True)
+        else:
+            self.py.pack_forget()
+            self.tabs.pack(fill="both", expand=True)
+
+    def store_solved(self, q: Question) -> bool:
+        return q.id in self.store.solved_ids()
 
     def _refresh_picker(self) -> None:
         solved = self.store.solved_ids()
         labels = [FREE_PRACTICE]
-        for q in self.questions:
+        for q in self.visible:
             mark = "[done]" if q.id in solved else "[    ]"
             custom = "  (generated)" if q.generated else ("  (yours)" if q.is_custom else "")
             labels.append(f"{mark}  {q.difficulty:<6}  {q.title}{custom}")
         self.picker["values"] = labels
-        done = sum(1 for q in self.questions if q.id in solved)
-        self.progress.configure(text=f"Solved {done} / {len(self.questions)}")
+        done = sum(1 for q in self.visible if q.id in solved)
+        self.progress.configure(text=f"Solved {done} / {len(self.visible)}")
 
-    def _select(self, question_index: int | None) -> None:
+    def _select(self, question_index: int | None, save_draft: bool = True) -> None:
         """question_index None means free practice."""
-        self.drafts[self.current.id if self.current else None] = self.editor.get()
-        self.current = None if question_index is None or not self.questions \
-            else self.questions[question_index]
+        if save_draft:
+            self.drafts[self._draft_key(self.current)] = self.editor.get()
+        self.current = None if question_index is None or not self.visible \
+            else self.visible[question_index]
         self.picker.current(0 if self.current is None else question_index + 1)
         self._show_current()
 
@@ -715,6 +824,7 @@ class SqlHelperApp:
 
     def _show_current(self) -> None:
         q = self.current
+        python = self.mode == MODE_PYTHON
         self._set_feedback("")
         state = "normal" if q else "disabled"
         for btn in (self.hint_btn, self.solution_btn, self.check_btn):
@@ -722,21 +832,59 @@ class SqlHelperApp:
         if q is None:
             self.q_title.configure(text="Free practice")
             self.q_meta.configure(text="")
-            self.q_prompt.configure(text="Write any SELECT query against the practice tables. "
-                                         "Browse the Tables tab to see what data is available.")
+            self.q_prompt.configure(text=(
+                "Write any Python and press Run. Use the Visualise tab to step through it "
+                "line by line." if python else
+                "Write any SELECT query against the practice tables. "
+                "Browse the Tables tab to see what data is available."))
         else:
             self.q_title.configure(text=q.title)
             order = " | row order matters" if q.order_matters else ""
+            style = {KIND_FUNCTION: " | write a function", KIND_OUTPUT: " | predict the output"}.get(q.kind, "")
             source = "generated" if q.generated else ("your question" if q.is_custom else "built-in")
-            self.q_meta.configure(text=f"{q.difficulty} | {q.topic} | {source}{order}")
+            self.q_meta.configure(text=f"{q.difficulty} | {q.topic} | {source}{order}{style}")
             self.q_prompt.configure(text=q.prompt)
+
+        output_question = q is not None and q.kind == KIND_OUTPUT
+        self.q_code.pack_forget()
+        if output_question:
+            self.q_code.configure(state="normal", height=min(q.solution.count("\n") + 1, 10))
+            self.q_code.delete("1.0", "end")
+            self.q_code.insert("1.0", q.solution.rstrip())
+            self.q_code.configure(state="disabled")
+            self.q_code.pack(fill="x", pady=(6, 0), before=self.q_buttons)
+        if not python:
+            self.editor.set_language(MODE_SQL)
+            self.editor_label.configure(text="Your SQL")
+        elif output_question:
+            self.editor.set_language(None)
+            self.editor_label.configure(text="What does it print? Type the exact output:")
+        else:
+            self.editor.set_language(MODE_PYTHON)
+            self.editor_label.configure(text="Your Python code")
+
         self.expected_revealed = False
         self._render_expected()
         self.next_btn.configure(default="normal", text="Next >")
-        self.editor.set(self.drafts.get(q.id if q else None, ""))
-        self.user_grid.clear("Start typing a query to see results here.")
+        key = self._draft_key(q)
+        starter = q.starter if (q is not None and python and q.kind == KIND_FUNCTION) else ""
+        self.editor.set(self.drafts.get(key) or starter)
+        self.editor.highlight()
+        if python:
+            self.py.show_question(q)
+            self.py.lesson_view.show(lesson_for(q, MODE_PYTHON))
+            self._schedule_live_run()
+        else:
+            self.user_grid.clear("Start typing a query to see results here.")
+            self.sql_lesson.show(lesson_for(q, MODE_SQL))
         self.status.configure(text="")
         self.editor.text.focus_set()
+
+    def show_lesson(self) -> None:
+        if self.mode == MODE_PYTHON:
+            self.py.tabs.select(self.py.lesson_view)
+        else:
+            self.tabs.select(self.sql_lesson)
 
     def toggle_expected(self, select_tab: bool = False) -> None:
         if self.current is None:
@@ -744,10 +892,19 @@ class SqlHelperApp:
         self.expected_revealed = not self.expected_revealed
         self._render_expected()
         if select_tab and self.expected_revealed:
-            self.tabs.select(self.expected_tab)
+            if self.mode == MODE_PYTHON:
+                self.py.tabs.select(self.py.expected_tab)
+            else:
+                self.tabs.select(self.expected_tab)
 
     def _render_expected(self) -> None:
         q = self.current
+        if self.mode == MODE_PYTHON:
+            label = "Hide Expected Result" if self.expected_revealed else "Show Expected Result"
+            self.card_expected_btn.configure(state="normal" if q else "disabled",
+                                             text=label if q else "Show Expected Result")
+            self.py.render_expected(q, self.expected_revealed)
+            return
         buttons = (self.expected_btn, self.card_expected_btn)
         if q is None:
             for b in buttons:
@@ -767,13 +924,14 @@ class SqlHelperApp:
             self.expected_grid.clear(f"This question's solution has an error: {expected.error}")
 
     def delete_generated(self) -> None:
-        generated = [q for q in self.questions if q.generated]
+        generated = [q for q in self.visible if q.generated]
         if not generated:
             messagebox.showinfo("Delete generated questions", "There are no generated questions.")
             return
         if not messagebox.askyesno(
                 "Delete generated questions?",
-                f"Delete all {len(generated)} generated questions? Their files are removed from "
+                f"Delete all {len(generated)} generated {'Python' if self.mode == MODE_PYTHON else 'SQL'} "
+                "questions? Their files are removed from "
                 "the data folder and this can't be undone. Questions you wrote yourself and "
                 "your attempt history are kept."):
             return
@@ -791,18 +949,19 @@ class SqlHelperApp:
     def after_reset(self, question_id: str | None, backup) -> None:
         """Clear typed answers that belonged to the reset progress and refresh the UI."""
         if question_id is None:
-            self.drafts.clear()
+            for q in self.visible:
+                self.drafts.pop(q.id, None)
         else:
             self.drafts.pop(question_id, None)
         affected = question_id is None or (self.current and self.current.id == question_id)
         self._refresh_picker()
-        self.picker.current(0 if self.current is None else self.questions.index(self.current) + 1)
+        self.picker.current(0 if self.current is None else self.visible.index(self.current) + 1)
         if affected:
-            self.drafts[self.current.id if self.current else None] = ""
+            self.drafts.pop(self._draft_key(self.current), None)
             self._show_current()
         where = (f" A backup of the old history was saved as history_backups/{backup.name} "
                  "in the data folder.") if backup else ""
-        self._set_feedback(("All progress reset." if question_id is None
+        self._set_feedback(("All progress in this mode reset." if question_id is None
                             else "Progress for this question reset.") + where)
 
     def show_hint(self) -> None:
@@ -810,20 +969,36 @@ class SqlHelperApp:
             self._set_feedback(f"Hint: {self.current.hint or 'No hint for this question.'}")
 
     def reveal_solution(self) -> None:
-        if self.current and messagebox.askyesno(
-                "Reveal solution?", "Show one possible solution below the editor? "
-                                    "Your own query is left untouched."):
-            self._set_feedback(f"One possible solution:\n{self.current.solution}")
+        q = self.current
+        if not q or not messagebox.askyesno(
+                "Reveal solution?", "Show the answer below the editor? "
+                                    "What you've typed is left untouched."):
+            return
+        if q.kind == KIND_OUTPUT:
+            printed = self.py.expected_for(q).module_out.rstrip()
+            self._set_feedback(f"The code prints:\n{printed}\n\nTip: step through it in the "
+                               "Visualise tab to see why.")
+            self.expected_revealed = True
+            self._render_expected()
+        else:
+            self._set_feedback(f"One possible solution:\n{q.solution.rstrip()}")
 
     def new_question(self, from_editor: bool = False) -> None:
-        QuestionDialog(self, starter_sql=self.editor.get() if from_editor else "")
+        starter = self.editor.get() if from_editor else ""
+        if self.mode == MODE_PYTHON:
+            PythonQuestionDialog(self, starter_code=starter)
+        else:
+            QuestionDialog(self, starter_sql=starter)
 
     def edit_question(self) -> None:
         if not self.current or not self.current.is_custom:
             messagebox.showinfo("Edit question", "Only questions you created can be edited. "
                                 "Use 'New Question from Current Query' to build on a built-in one.")
             return
-        QuestionDialog(self, question=self.current)
+        if self.current.mode == MODE_PYTHON:
+            PythonQuestionDialog(self, question=self.current)
+        else:
+            QuestionDialog(self, question=self.current)
 
     def delete_question(self) -> None:
         q = self.current
@@ -843,8 +1018,13 @@ class SqlHelperApp:
             self.reload_questions()
 
     def load_attempt(self, question_id: str | None, sql: str) -> None:
-        index = next((i for i, q in enumerate(self.questions) if q.id == question_id), None)
-        self._select(index)
+        target = next((q for q in self.questions if q.id == question_id), None)
+        if target is not None and target.mode != self.mode:
+            self._switch_mode(target.mode)
+            self._filter()
+            self._refresh_picker()
+        index = next((i for i, q in enumerate(self.visible) if q.id == question_id), None)
+        self._select(index, save_draft=target is None or target.mode == self.mode)
         self.editor.set(sql)
         self.root.lift()
 
@@ -858,6 +1038,9 @@ class SqlHelperApp:
 
     def _live_run(self) -> None:
         self._live_job = None
+        if self.mode == MODE_PYTHON:
+            self.py.live()
+            return
         sql = self.editor.get()
         if not sql.strip():
             self.user_grid.clear("Start typing a query to see results here.")
@@ -893,6 +1076,9 @@ class SqlHelperApp:
         Wrong answers are not graded here (that's what Check Answer is for), so
         running a half-finished query never shows a "wrong" message.
         """
+        if self.mode == MODE_PYTHON:
+            self.py.run(check=False)
+            return None
         result = self._execute()
         q = self.current
         if result.ok and result.columns and q is not None:
@@ -905,6 +1091,9 @@ class SqlHelperApp:
     def check_answer(self) -> None:
         q = self.current
         if q is None:
+            return
+        if self.mode == MODE_PYTHON:
+            self.py.run(check=True)
             return
         if not self.editor.get().strip():
             self._set_feedback("Write a query first.", BAD)
@@ -923,6 +1112,28 @@ class SqlHelperApp:
                      else "\nStuck? Press 'Show Expected Result' to see the target output.")
         self._set_feedback(text, BAD, is_error=not user.ok)
         self._record(q, correct=False)
+
+    def python_graded(self, q: Question, outcome, check: bool, user_ok: bool) -> None:
+        """Called by the Python panel when a Run or Check finishes."""
+        if q is not self.current:
+            return   # the user moved to another question while it was running
+        if outcome.correct:
+            self._on_correct(q, outcome)
+            return
+        details = "\n".join(f"- {d}" for d in outcome.details)
+        if check:
+            text = outcome.message + (f"\n{details}" if details else "")
+            if user_ok:
+                text += ("\nCompare with the Expected tab." if self.expected_revealed
+                         else "\nStuck? Press 'Show Expected Result' to see the target output.")
+            self._set_feedback(text, BAD, is_error=not user_ok)
+            self._record(q, correct=False)
+        elif not user_ok:
+            self._set_feedback(outcome.message + (f"\n{details}" if details else ""), BAD, is_error=True)
+        elif q.kind == KIND_OUTPUT:
+            self._set_feedback("Not quite yet. Press Check Answer for details.", BAD)
+        elif self._feedback_is_error:
+            self._set_feedback("")
 
     def _on_correct(self, q: Question, outcome) -> None:
         """Mark the question solved, show the answer, and point the user at Next."""
@@ -943,7 +1154,8 @@ class SqlHelperApp:
         except OSError as exc:
             self.status.configure(foreground=BAD, text=f"Couldn't save history: {exc}")
         self._refresh_picker()
-        self.picker.current(self.questions.index(q) + 1)
+        if q in self.visible:
+            self.picker.current(self.visible.index(q) + 1)
 
     # ---- tables tab ----------------------------------------------------
     def _selected_table(self) -> str | None:
